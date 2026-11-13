@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compliance Checker</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #f0f2f5; --code-bg: #fbfbfc;
+    --border: #e2e5ea; --text: #15181d; --muted: #5f6875; --faint: #9aa2ad;
+    --accent: #3b5bdb; --accent-text: #ffffff;
+    --critical: #d9282f; --high: #e8590c; --medium: #d48a00; --low: #1971c2; --info: #7a838e;
+    --pass: #2b8a3e; --fail: #d9282f;
+    --good: #2b8a3e; --warn: #d48a00; --bad: #d9282f;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --radius: 10px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1115; --panel: #171a20; --panel-2: #1f232b; --code-bg: #13161b;
+      --border: #2a2f39; --text: #e6e8ec; --muted: #9aa3af; --faint: #5d6570;
+      --accent: #748ffc; --accent-text: #0f1115;
+      --critical: #ff6b6b; --high: #ff922b; --medium: #fcc419; --low: #4dabf7; --info: #adb5bd;
+      --pass: #51cf66; --fail: #ff6b6b; --good: #51cf66; --warn: #fcc419; --bad: #ff6b6b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a20; --panel-2: #1f232b; --code-bg: #13161b;
+    --border: #2a2f39; --text: #e6e8ec; --muted: #9aa3af; --faint: #5d6570;
+    --accent: #748ffc; --accent-text: #0f1115;
+    --critical: #ff6b6b; --high: #ff922b; --medium: #fcc419; --low: #4dabf7; --info: #adb5bd;
+    --pass: #51cf66; --fail: #ff6b6b; --good: #51cf66; --warn: #fcc419; --bad: #ff6b6b;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 var(--sans); display: flex; flex-direction: column; }
+  code { font-family: var(--mono); font-size: 0.92em; background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  a { color: var(--accent); }
+
+  .sev-critical { --sev-color: var(--critical); }
+  .sev-high { --sev-color: var(--high); }
+  .sev-medium { --sev-color: var(--medium); }
+  .sev-low { --sev-color: var(--low); }
+  .sev-info { --sev-color: var(--info); }
+
+  /* ---------- header ---------- */
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--accent-text); display: grid; place-items: center; flex: none; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: -0.01em; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  header .spacer { flex: 1; }
+  .ghost { background: none; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
+  .ghost:hover { background: var(--panel-2); }
+
+  /* ---------- layout ---------- */
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; padding: 16px 20px 20px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .toolbar .spacer { flex: 1; }
+  .meta { color: var(--muted); font-size: 12.5px; }
+  .primary { background: var(--accent); color: var(--accent-text); border: 0; border-radius: 8px; padding: 7px 14px; font-weight: 600; font-size: 13px; display: inline-flex; gap: 8px; align-items: center; }
+  .primary:disabled { opacity: 0.6; cursor: progress; }
+  .primary kbd { font: 11px var(--mono); opacity: 0.75; }
+
+  /* ---------- editor ---------- */
+  .editor { flex: 1; min-height: 0; display: flex; background: var(--code-bg); font: 13px/20px var(--mono); }
+  .editor:focus-within { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+  .gutter { width: 54px; flex: none; overflow: hidden; border-right: 1px solid var(--border); color: var(--faint); text-align: right; user-select: none; }
+  #gutter-inner { padding: 12px 10px 60px 0; will-change: transform; }
+  .ln { height: 20px; position: relative; }
+  .ln.mark { color: var(--sev-color); font-weight: 700; cursor: pointer; }
+  .ln.mark::before { content: ""; position: absolute; left: 9px; top: 7px; width: 6px; height: 6px; border-radius: 50%; background: var(--sev-color); }
+  .ln.active { color: var(--accent); }
+  .code-wrap { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+  .bands { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #bands { position: relative; will-change: transform; }
+  .band { position: absolute; left: 0; right: 0; height: 20px; background: color-mix(in srgb, var(--sev-color) 12%, transparent); border-left: 3px solid var(--sev-color); }
+  .band.active { background: color-mix(in srgb, var(--accent) 20%, transparent); border-left-color: var(--accent); }
+  textarea#code { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; resize: none; border: 0; outline: none; background: transparent; color: var(--text); font: inherit; padding: 12px 16px; white-space: pre; overflow: auto; tab-size: 4; }
+
+  /* ---------- results ---------- */
+  .results-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .results-head h2 { font-size: 14px; margin: 0; }
+  .results-body { flex: 1; overflow: auto; padding: 16px; }
+  .empty { height: 100%; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 24px; }
+  .empty strong { display: block; color: var(--text); font-size: 15px; margin-bottom: 4px; }
+  .stale-banner { display: none; margin: 0 0 14px; padding: 8px 12px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); font-size: 13px; }
+  .is-stale .stale-banner { display: block; }
+  .is-stale .report { opacity: 0.55; }
+
+  .summary { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  .ring { position: relative; width: 112px; height: 112px; flex: none; }
+  .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 10; }
+  .ring .track { stroke: var(--panel-2); }
+  .ring .value { stroke: var(--ring-color); stroke-linecap: round; transition: stroke-dasharray 0.8s cubic-bezier(.2,.8,.2,1); }
+  .ring-label { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+  .ring-label strong { font-size: 30px; line-height: 1; letter-spacing: -0.02em; }
+  .ring-label span { font-size: 12px; color: var(--muted); }
+  .verdict { flex: 1; min-width: 200px; }
+  .grade-line { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .grade { font-size: 26px; font-weight: 800; color: var(--ring-color); line-height: 1; }
+  .gate { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12.5px; letter-spacing: 0.04em; }
+  .gate.PASS { background: color-mix(in srgb, var(--pass) 15%, transparent); color: var(--pass); }
+  .gate.FAIL { background: color-mix(in srgb, var(--fail) 15%, transparent); color: var(--fail); }
+  .reasons { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .stats { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+
+  .section-title { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 22px 0 8px; font-weight: 600; }
+  .cats { display: grid; gap: 4px; }
+  .cat { display: grid; grid-template-columns: 120px 1fr 34px 70px; gap: 10px; align-items: center; background: none; border: 1px solid transparent; border-radius: 8px; padding: 6px 8px; text-align: left; }
+  .cat:hover { background: var(--panel-2); }
+  .cat.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .cat-name { font-weight: 600; text-transform: capitalize; }
+  .bar { height: 8px; border-radius: 99px; background: var(--panel-2); overflow: hidden; }
+  .bar > span { display: block; height: 100%; border-radius: 99px; background: var(--bar-color); width: 0; transition: width 0.8s cubic-bezier(.2,.8,.2,1); }
+  .cat-score { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  .cat-count { color: var(--muted); font-size: 12.5px; text-align: right; }
+
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chip { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; display: inline-flex; gap: 6px; align-items: center; }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sev-color, var(--muted)); }
+  .chip.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  .chip b { font-variant-numeric: tabular-nums; }
+
+  .findings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .finding { min-width: 0; border: 1px solid var(--border); border-left: 4px solid var(--sev-color); border-radius: 8px; background: var(--panel); transition: box-shadow 0.2s, border-color 0.2s; }
+  .finding.is-active { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+  .finding-head { width: 100%; display: flex; gap: 10px; align-items: baseline; background: none; border: 0; padding: 10px 12px 2px; text-align: left; }
+  .sev { font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; color: var(--sev-color); text-transform: uppercase; flex: none; width: 62px; }
+  .finding-title { font-weight: 600; flex: 1; }
+  .loc { font: 12px var(--mono); color: var(--muted); flex: none; }
+  .finding-head:hover .loc { color: var(--accent); }
+  .finding-body { padding: 0 12px 10px 84px; }
+  .msg { margin: 2px 0 6px; color: var(--muted); overflow-wrap: anywhere; }
+  .snippet { display: block; font: 12px/1.5 var(--mono); background: var(--code-bg); border: 1px solid var(--border); padding: 6px 8px; border-radius: 6px; white-space: pre; overflow-x: auto; margin-bottom: 6px; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+  details p { margin: 6px 0; font-size: 13px; }
+  .rule-id { font: 11.5px var(--mono); color: var(--faint); margin-left: 6px; }
+  .none { padding: 18px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; }
+  .error-card { border: 1px solid color-mix(in srgb, var(--fail) 40%, transparent); background: color-mix(in srgb, var(--fail) 8%, transparent); border-radius: 8px; padding: 14px; }
+
+  /* ---------- rules dialog ---------- */
+  dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text); padding: 0; width: min(860px, calc(100vw - 32px)); max-height: calc(100vh - 64px); }
+  dialog::backdrop { background: rgb(0 0 0 / 0.45); }
+  .dialog-head { display: flex; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  .dialog-head h2 { margin: 0; font-size: 16px; flex: 1; }
+  .dialog-body { padding: 14px 18px 20px; overflow: auto; }
+  .policy-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 8px; }
+  .fact { background: var(--panel-2); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+  .fact b { display: block; font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.sev-cell { color: var(--sev-color); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  @media (max-width: 980px) {
+    main { grid-template-columns: 1fr; padding: 12px 16px 16px; }
+    .editor-panel { height: 60vh; min-height: 360px; }
+    .results-panel { min-height: 50vh; }
+    .cat { grid-template-columns: 100px 1fr 30px; }
+    .cat-count { display: none; }
+    .finding-body { padding-left: 12px; }
+    .gutter { width: 44px; }
+    header .sub { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+  </div>
+  <div>
+    <h1>Compliance Checker</h1>
+    <div class="sub">Static analysis for Python · scores code against a security &amp; best-practice policy</div>
+  </div>
+  <div class="spacer"></div>
+  <button class="ghost" id="rules-btn">View policy</button>
+</header>
+
+<main>
+  <section class="panel editor-panel" aria-label="Code editor">
+    <div class="toolbar">
+      <button class="ghost" data-sample="bad_example">Load messy sample</button>
+      <button class="ghost" data-sample="good_example">Load clean sample</button>
+      <button class="ghost" id="open-btn">Open file…</button>
+      <input type="file" id="file-input" accept=".py,.txt" hidden>
+      <div class="spacer"></div>
+      <span class="meta" id="line-meta">0 lines</span>
+      <button class="primary" id="analyze-btn">Analyze <kbd>Ctrl ↵</kbd></button>
+    </div>
+    <div class="editor">
+      <div class="gutter" aria-hidden="true"><div id="gutter-inner"></div></div>
+      <div class="code-wrap">
+        <div class="bands" aria-hidden="true"><div id="bands"></div></div>
+        <textarea id="code" spellcheck="false" wrap="off" autocomplete="off" autocapitalize="off"
+                  aria-label="Python code to analyze" placeholder="Paste Python code here…"></textarea>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel results-panel" id="results-panel" aria-label="Analysis results">
+    <div class="results-head">
+      <h2>Report</h2>
+      <div class="spacer" style="flex:1"></div>
+      <button class="ghost" id="export-btn" hidden>Export JSON</button>
+    </div>
+    <div class="results-body" id="results" aria-live="polite"></div>
+  </section>
+</main>
+
+<dialog id="rules-dialog">
+  <div class="dialog-head">
+    <h2 id="policy-title">Policy</h2>
+    <button class="ghost" id="close-rules">Close</button>
+  </div>
+  <div class="dialog-body" id="rules-body">Loading…</div>
+</dialog>
+
+<script>
+(() => {
+  "use strict";
+  const LINE_H = 20, PAD = 12;
+  const SEVERITIES = ["critical", "high", "medium", "low", "info"];
+  const $ = (sel, el = document) => el.querySelector(sel);
+
+  const codeEl = $("#code"), gutterInner = $("#gutter-inner"), bandsEl = $("#bands");
+  const resultsEl = $("#results"), resultsPanel = $("#results-panel");
+  const analyzeBtn = $("#analyze-btn"), exportBtn = $("#export-btn"), lineMeta = $("#line-meta");
+
+  let samples = {};
+  let report = null;          // last report from the server
+  let analyzedCode = null;    // the code that report describes
+  let activeLine = null;
+  const filters = { category: null, severity: null };
+
+  // ------------------------------------------------------------ helpers
+  const escapeHtml = s => String(s ?? "").replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const richText = s => escapeHtml(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+  const isFresh = () => report && codeEl.value === analyzedCode;
+  const plural = (n, one, many = one + "s") => `${n} ${n === 1 ? one : many}`;
+  const gradeColor = score => score >= 90 ? "var(--good)" : score >= 70 ? "var(--warn)" : "var(--bad)";
+
+  function refLink(ref) {
+    if (!ref) return "";
+    const cwe = ref.match(/^CWE-(\d+)$/), pep = ref.match(/^PEP (\d+)$/);
+    let url = null, label = ref;
+    if (cwe) url = `https://cwe.mitre.org/data/definitions/${cwe[1]}.html`;
+    else if (pep) url = `https://peps.python.org/pep-${pep[1].padStart(4, "0")}/`;
+    else if (/^https?:\/\//.test(ref)) { url = ref; label = "Reference"; }
+    return url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)} ↗</a>` : escapeHtml(ref);
+  }
+
+  // Worst severity per line, used for gutter dots and line bands.
+  function lineMarks() {
+    const marks = new Map();
+    if (!isFresh()) return marks;
+    if (!report.ok) {
+      if (report.error?.line) marks.set(report.error.line, "critical");
+      return marks;
+    }
+    for (const f of report.findings) {
+      const prev = marks.get(f.line);
+      if (!prev || SEVERITIES.indexOf(f.severity) < SEVERITIES.indexOf(prev)) marks.set(f.line, f.severity);
+    }
+    return marks;
+  }
+
+  // ------------------------------------------------------------ editor
+  let gutterKey = "";
+  function renderEditorDecorations(force = false) {
+    const count = codeEl.value.split("\n").length;
+    lineMeta.textContent = `${count} line${count === 1 ? "" : "s"}`;
+    const marks = lineMarks();
+    const key = `${count}|${isFresh()}|${activeLine}|${report ? report.findings?.length : -1}`;
+    if (key !== gutterKey || force) {
+      gutterKey = key;
+      let html = "";
+      for (let i = 1; i <= count; i++) {
+        const sev = marks.get(i);
+        const cls = ["ln", sev ? `mark sev-${sev}` : "", i === activeLine ? "active" : ""].join(" ");
+        html += `<div class="${cls}" data-line="${i}">${i}</div>`;
+      }
+      gutterInner.innerHTML = html;
+
+      let bands = "";
+      for (const [line, sev] of marks) bands += `<div class="band sev-${sev}" style="top:${PAD + (line - 1) * LINE_H}px"></div>`;
+      if (activeLine) bands += `<div class="band active" style="top:${PAD + (activeLine - 1) * LINE_H}px"></div>`;
+      bandsEl.innerHTML = bands;
+    }
+    syncScroll();
+  }
+
+  function syncScroll() {
+    const y = -codeEl.scrollTop;
+    gutterInner.style.transform = `translateY(${y}px)`;
+    bandsEl.style.transform = `translateY(${y}px)`;
+  }
+
+  function jumpToLine(line) {
+    const lines = codeEl.value.split("\n");
+    let offset = 0;
+    for (let i = 0; i < line - 1 && i < lines.length; i++) offset += lines[i].length + 1;
+    activeLine = line;
+    codeEl.focus({ preventScroll: true });
+    codeEl.setSelectionRange(offset, offset);
+    codeEl.scrollTop = Math.max(0, PAD + (line - 1) * LINE_H - codeEl.clientHeight / 3);
+    codeEl.scrollLeft = 0;
+    renderEditorDecorations();
+    markActiveFindings(line, false);
+  }
+
+  function setCode(text) {
+    codeEl.value = text.replace(/\r\n/g, "\n");
+    codeEl.scrollTop = 0;
+    activeLine = null;
+    onCodeChanged();
+  }
+
+  function onCodeChanged() {
+    resultsPanel.classList.toggle("is-stale", !!report && !isFresh());
+    renderEditorDecorations();
+  }
+
+  codeEl.addEventListener("input", onCodeChanged);
+  codeEl.addEventListener("scroll", syncScroll);
+  codeEl.addEventListener("keydown", e => {
+    if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      const { selectionStart: s, selectionEnd: end } = codeEl;
+      codeEl.setRangeText("    ", s, end, "end");
+      onCodeChanged();
+    } else if (e.key === "Escape") {
+      codeEl.blur();
+    }
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runAnalysis(); }
+  });
+  gutterInner.addEventListener("click", e => {
+    const ln = e.target.closest(".ln.mark");
+    if (!ln) return;
+    const line = Number(ln.dataset.line);
+    jumpToLine(line);
+    markActiveFindings(line, true);
+  });
+
+  // ------------------------------------------------------------ analysis
+  async function runAnalysis() {
+    const code = codeEl.value;
+    analyzeBtn.disabled = true;
+    analyzeBtn.firstChild.textContent = "Analyzing… ";
+    try {
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      report = data;
+      analyzedCode = code;
+      activeLine = null;
+      filters.category = filters.severity = null;
+      renderResults();
+      renderEditorDecorations(true);
+      resultsPanel.classList.remove("is-stale");
+      if (!data.ok && data.error?.line) jumpToLine(data.error.line);
+    } catch (err) {
+      resultsEl.innerHTML = `<div class="error-card"><strong>Request failed.</strong> ${escapeHtml(err.message)}<br>
+        Is <code>python server.py</code> still running?</div>`;
+    } finally {
+      analyzeBtn.disabled = false;
+      analyzeBtn.firstChild.textContent = "Analyze ";
+    }
+  }
+  analyzeBtn.addEventListener("click", runAnalysis);
+
+  // ------------------------------------------------------------ results
+  function renderEmpty() {
+    exportBtn.hidden = true;
+    resultsEl.innerHTML = `<div class="empty"><div>
+      <strong>No report yet</strong>
+      Paste Python code or load a sample, then press <b>Analyze</b>.<br>
+      The code is parsed, never executed.
+    </div></div>`;
+  }
+
+  function renderResults() {
+    if (!report) return renderEmpty();
+    exportBtn.hidden = false;
+    const stale = `<div class="stale-banner">The code changed since this report. Press <b>Analyze</b> to update it.</div>`;
+
+    if (!report.ok) {
+      const e = report.error;
+      resultsEl.innerHTML = stale + `<div class="report"><div class="error-card">
+        <span class="gate FAIL">FAIL</span>
+        <p><strong>${escapeHtml(e.message)}</strong>${e.line ? ` on line ${e.line}` : ""}.</p>
+        <p class="meta">The code has to parse before it can be checked against the policy.</p>
+        ${e.line ? `<button class="ghost" data-goto="${e.line}">Go to line ${e.line}</button>` : ""}
+      </div></div>`;
+      return;
+    }
+
+    const r = report;
+    const s = r.stats;
+    const color = gradeColor(r.score);
+    const reasons = r.gate.reasons.length
+      ? `<ul class="reasons">${r.gate.reasons.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`
+      : `<p class="reasons" style="padding:0">Meets every requirement of the policy.</p>`;
+
+    const cats = Object.entries(r.categories).map(([name, c]) => `
+      <button class="cat ${filters.category === name ? "active" : ""}" data-cat="${name}" title="Show only ${name} findings">
+        <span class="cat-name">${name}</span>
+        <span class="bar" style="--bar-color:${gradeColor(c.score)}"><span data-width="${c.score}"></span></span>
+        <span class="cat-score">${c.score}</span>
+        <span class="cat-count">${c.findings} issue${c.findings === 1 ? "" : "s"}</span>
+      </button>`).join("");
+
+    resultsEl.innerHTML = stale + `<div class="report">
+      <div class="summary" style="--ring-color:${color}">
+        <div class="ring" role="img" aria-label="Score ${r.score} out of 100">
+          <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="50"/>
+            <circle class="value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="0 100"/></svg>
+          <div class="ring-label"><strong>${r.score}</strong><span>/ 100</span></div>
+        </div>
+        <div class="verdict">
+          <div class="grade-line"><span class="grade">Grade ${r.grade}</span><span class="gate ${r.gate.status}">${r.gate.status === "PASS" ? "✓ PASS" : "✕ FAIL"}</span></div>
+          ${reasons}
+          <div class="stats">${plural(s.lines, "line")} · ${plural(s.functions, "function")} · ${plural(s.classes, "class", "classes")} · ${plural(r.findings.length, "finding")}</div>
+        </div>
+      </div>
+      <div class="section-title">Categories</div>
+      <div class="cats">${cats}</div>
+      <div class="section-title">Findings</div>
+      <div id="findings-area"></div>
+    </div>`;
+
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      resultsEl.querySelector(".ring .value")?.setAttribute("stroke-dasharray", `${r.score} 100`);
+      resultsEl.querySelectorAll(".bar > span").forEach(el => { el.style.width = el.dataset.width + "%"; });
+    }));
+    renderFindings();
+  }
+
+  function renderFindings() {
+    const area = $("#findings-area");
+    if (!area || !report?.ok) return;
+    const inCategory = report.findings.filter(f => !filters.category || f.category === filters.category);
+    const counts = Object.fromEntries(SEVERITIES.map(sv => [sv, inCategory.filter(f => f.severity === sv).length]));
+    const shown = inCategory.filter(f => !filters.severity || f.severity === filters.severity);
+
+    const chips = [`<button class="chip ${filters.severity ? "" : "active"}" data-sev="">All <b>${inCategory.length}</b></button>`]
+      .concat(SEVERITIES.filter(sv => counts[sv]).map(sv =>
+        `<button class="chip sev-${sv} ${filters.severity === sv ? "active" : ""}" data-sev="${sv}">
+          <span class="dot"></span>${sv[0].toUpperCase() + sv.slice(1)} <b>${counts[sv]}</b></button>`)).join("");
+
+    let list;
+    if (!report.findings.length) {
+      list = `<div class="none">No findings. This code meets every rule in the policy.</div>`;
+    } else if (!shown.length) {
+      list = `<div class="none">No findings match this filter.</div>`;
+    } else {
+      list = shown.map((f, i) => `
+        <article class="finding sev-${f.severity} ${f.line === activeLine ? "is-active" : ""}" data-line="${f.line}">
+          <button class="finding-head" data-goto="${f.line}" title="Show line ${f.line} in the editor">
+            <span class="sev">${f.severity}</span>
+            <span class="finding-title">${escapeHtml(f.title)}<span class="rule-id">${f.rule_id}</span></span>
+            <span class="loc">line ${f.line}</span>
+          </button>
+          <div class="finding-body">
+            <p class="msg">${richText(f.message)}</p>
+            ${f.snippet ? `<code class="snippet">${escapeHtml(f.snippet)}</code>` : ""}
+            <details ${i === 0 && ["critical", "high"].includes(f.severity) ? "open" : ""}>
+              <summary>Why it matters &amp; how to fix</summary>
+              <p><b>Why:</b> ${richText(f.why)}</p>
+              <p><b>Fix:</b> ${richText(f.fix)}</p>
+              ${f.ref ? `<p>${refLink(f.ref)}</p>` : ""}
+            </details>
+          </div>
+        </article>`).join("");
+    }
+    area.innerHTML = `<div class="chips">${chips}</div><div class="findings">${list}</div>`;
+  }
+
+  function markActiveFindings(line, scroll) {
+    let first = null;
+    resultsEl.querySelectorAll(".finding").forEach(el => {
+      const on = Number(el.dataset.line) === line;
+      el.classList.toggle("is-active", on);
+      if (on && !first) first = el;
+    });
+    if (scroll && first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  resultsEl.addEventListener("click", e => {
+    const goto = e.target.closest("[data-goto]");
+    if (goto) return jumpToLine(Number(goto.dataset.goto));
+    const cat = e.target.closest(".cat");
+    if (cat) {
+      filters.category = filters.category === cat.dataset.cat ? null : cat.dataset.cat;
+      filters.severity = null;
+      resultsEl.querySelectorAll(".cat").forEach(el => el.classList.toggle("active", el.dataset.cat === filters.category));
+      return renderFindings();
+    }
+    const chip = e.target.closest(".chip");
+    if (chip) {
+      filters.severity = chip.dataset.sev || null;
+      renderFindings();
+    }
+  });
+
+  exportBtn.addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "compliance-report.json" });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
+  // ------------------------------------------------------------ samples & files
+  document.querySelectorAll("[data-sample]").forEach(btn =>
+    btn.addEventListener("click", () => { if (samples[btn.dataset.sample]) setCode(samples[btn.dataset.sample]); }));
+
+  const fileInput = $("#file-input");
+  $("#open-btn").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files[0];
+    if (file) setCode(await file.text());
+    fileInput.value = "";
+  });
+
+  // ------------------------------------------------------------ policy dialog
+  const dialog = $("#rules-dialog");
+  $("#close-rules").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", e => { if (e.target === dialog) dialog.close(); });
+  $("#rules-btn").addEventListener("click", async () => {
+    dialog.showModal();
+    try {
+      const { policy, rules } = await (await fetch("/api/policy")).json();
+      $("#policy-title").textContent = policy.name;
+      const weights = Object.entries(policy.weights).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(" · ");
+      const limits = policy.limits;
+      $("#rules-body").innerHTML = `
+        <div class="policy-facts">
+          <div class="fact"><b>Gate fails when</b>score &lt; ${policy.gate.min_score}, or any ${policy.gate.fail_on_severity.join(" / ")} finding</div>
+          <div class="fact"><b>Category weights</b>${weights}</div>
+          <div class="fact"><b>Limits</b>${limits.max_function_lines} lines/function · complexity ${limits.max_complexity} · ${limits.max_params} params · nesting ${limits.max_nesting}</div>
+          <div class="fact"><b>Penalty per finding</b>${Object.entries(policy.penalties).map(([k, v]) => `${k} −${v}`).join(" · ")}</div>
+        </div>
+        <p class="meta">Edit <code>checker/policy.json</code> to change any of this. ${rules.length} rules.</p>
+        <table><thead><tr><th>Rule</th><th>Severity</th><th>Category</th><th>Checks for</th><th>Ref</th></tr></thead><tbody>
+        ${rules.map(r => `<tr><td><code>${r.id}</code></td><td class="sev-cell sev-${r.severity}">${r.severity}</td>
+          <td style="text-transform:capitalize">${r.category}</td><td>${escapeHtml(r.title)}</td><td>${refLink(r.ref)}</td></tr>`).join("")}
+        </tbody></table>`;
+    } catch {
+      $("#rules-body").textContent = "Could not load the policy. Is the server running?";
+    }
+  });
+
+  // ------------------------------------------------------------ start
+  renderEmpty();
+  renderEditorDecorations();
+  fetch("/api/samples").then(r => r.json()).then(data => {
+    samples = data;
+    if (!codeEl.value && samples.bad_example) setCode(samples.bad_example);
+  }).catch(() => {});
+})();
+</script>
+</body>
+</html>
