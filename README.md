@@ -16,10 +16,16 @@ python server.py
 Then open http://127.0.0.1:8000. The messy sample loads and is analyzed straight away.
 
 * **Live**: the report re-runs as you type (turn off with the *Live* toggle; Ctrl/⌘+Enter runs it by hand).
-* **Hover** an underlined line to see what's wrong with it; click a gutter dot or a mark in the right-hand ruler to jump to it.
-* **Preview fix** on a finding shows the exact patch as a diff; **Apply** it and the score badge shows what changed.
-* **Patch all** applies every safe automatic fix in one go (46 → 74 on the messy sample). **Undo** reverts a patch.
-* Click a category bar, a CWE or a severity / *Fixable* chip to filter.
+  Live analysis and syntax highlighting switch off automatically for files over 60,000 characters.
+* **Hover** an underlined line, or put the cursor on it and read the status bar under the editor.
+* **Keyboard**: F8 / Shift+F8 jump to the next / previous issue, Ctrl/⌘+. previews the patch for the cursor's line,
+  and j / k step through findings when the editor doesn't have focus.
+* **Preview fix** shows the exact patch as a diff; **Apply** it and the score badge shows what changed.
+  **Patch all** applies every automatic fix in one go (46 → 74 on the messy sample). **Undo** reverts a patch.
+* **Suppress** adds a `# pwn2patch: ignore[RULE]` comment to the finding's line.
+* The report has three tabs (Findings, Categories, Weaknesses). Findings can be grouped by severity, rule or line
+  and filtered by severity, category, CWE or *Fixable*. "on line N" in a message is a link.
+* Hardcoded secrets are masked in the report, the patch previews and the JSON export (*Show* reveals one).
 
 ## Patching
 
@@ -44,6 +50,25 @@ Tests:
 ```bash
 python -m unittest
 ```
+
+## Frontend contract
+
+The UI reads a few optional fields that the backend is adding. Until they arrive it falls back to today's behavior,
+so they can land in any order:
+
+| Field | Meaning | UI without it |
+|---|---|---|
+| `finding.patch` | `{title, note, edits}`: the automatic patch (`finding.fix` is the rule's advice text) | required today |
+| `finding.patch.safety` | `"safe"` or `"behavior_change"` | every patch looks safe; button says *Patch all* |
+| `finding.points.gain_if_fixed` | overall points recovered by fixing just this finding | shows the raw penalty |
+| `finding.evidence` | which signal found a secret: `name`, `value`, `usage` or `entropy` | no tag |
+| `report.suppressed` | findings hidden by an ignore comment (same shape as `findings`) | *Suppress* adds the comment and says the analyzer doesn't read it yet |
+| `report.patches_truncated` | `true` when only some findings got a patch prepared | no notice |
+| `POST /api/fix` `include_behavior_changes` | request flag; `false` = only safe patches | ignored |
+| `/api/fix` response `complete`, `applied[].safety` | `complete: false` when the run stopped at its limit | no notice / no grouping |
+
+Suppression comments look like `# pwn2patch: ignore[SEC004]` or `# pwn2patch: ignore[SEC004, STY003]` at the end of
+the finding's line; a bare `# pwn2patch: ignore` covers every rule on that line.
 
 ## How it works
 

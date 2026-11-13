@@ -236,8 +236,8 @@ def fixed(code: str, rule_id: str) -> str:
     code = textwrap.dedent(code)
     report = analyze(code)
     finding = next(f for f in report["findings"] if f["rule_id"] == rule_id)
-    assert finding["fix"], f"no fix for {rule_id}"
-    edits = [Edit(**e) for e in finding["fix"]["edits"]]
+    assert finding["patch"], f"no patch for {rule_id}"
+    edits = [Edit(**e) for e in finding["patch"]["edits"]]
     return apply_edits(code, edits)
 
 
@@ -263,11 +263,11 @@ class FixTests(unittest.TestCase):
 
     def test_user_chosen_program_gets_no_fix(self):
         report = analyze('import subprocess\nsubprocess.run(cmd, shell=True)')
-        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC002")["fix"])
+        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC002")["patch"])
 
     def test_password_hash_gets_no_fix(self):
         report = analyze('import hashlib\ndef hash_password(pw):\n    return hashlib.md5(pw).hexdigest()')
-        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC007")["fix"])
+        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC007")["patch"])
 
     def test_secret_moves_to_environment(self):
         out = fixed('API_KEY = "abcdef123456"', "SEC004")
@@ -298,12 +298,17 @@ class FixTests(unittest.TestCase):
         out = fixed('from flask import *\napp = Flask(__name__)\nx = request.args', "MNT005")
         self.assertIn("from flask import Flask, request", out)
 
+    def test_patch_does_not_replace_fix_advice(self):
+        report = analyze((SAMPLES / "bad_example.py").read_text(encoding="utf-8"))
+        for f in report["findings"]:
+            self.assertIsInstance(f["fix"], str)
+
     def test_every_offered_fix_parses(self):
         report = analyze((SAMPLES / "bad_example.py").read_text(encoding="utf-8"))
         source = (SAMPLES / "bad_example.py").read_text(encoding="utf-8")
         for f in report["findings"]:
-            if f["fix"]:
-                ast.parse(apply_edits(source, [Edit(**e) for e in f["fix"]["edits"]]))
+            if f["patch"]:
+                ast.parse(apply_edits(source, [Edit(**e) for e in f["patch"]["edits"]]))
 
     def test_patch_all_improves_bad_sample(self):
         source = (SAMPLES / "bad_example.py").read_text(encoding="utf-8")
