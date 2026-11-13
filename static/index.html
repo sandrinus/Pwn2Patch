@@ -123,6 +123,23 @@
   .cat-score { font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
   .cat-count { color: var(--muted); font-size: 12.5px; text-align: right; }
 
+  .cwe-note { color: var(--muted); font-size: 12.5px; margin: -2px 0 8px; }
+  .cwe-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .cwe-row { display: grid; grid-template-columns: 8px 78px minmax(0, 1fr) auto 36px; gap: 10px; align-items: center; background: none; border: 1px solid transparent; border-radius: 8px; padding: 5px 8px; text-align: left; }
+  .cwe-row:hover { background: var(--panel-2); }
+  .cwe-row.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .cwe-row .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sev-color); }
+  .cwe-id { font: 600 12.5px var(--mono); }
+  .cwe-short { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cwe-count { color: var(--muted); font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; }
+  .quality-tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+  .cwe-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
+  .cwe-pill { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; text-decoration: none; color: var(--text); border: 1px solid color-mix(in srgb, var(--sev-color) 45%, var(--border)); border-radius: 999px; padding: 1px 9px; }
+  .cwe-pill b { font: 600 11.5px var(--mono); color: var(--sev-color); }
+  .cwe-pill.quality { border-color: var(--border); }
+  .cwe-pill.quality b { color: var(--muted); }
+  .cwe-pill:hover { background: var(--panel-2); }
+
   .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
   .chip { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 3px 10px; font-size: 12.5px; display: inline-flex; gap: 6px; align-items: center; }
   .chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--sev-color, var(--muted)); }
@@ -166,6 +183,7 @@
     .results-panel { min-height: 50vh; }
     .cat { grid-template-columns: 100px 1fr 30px; }
     .cat-count { display: none; }
+    .cwe-row { grid-template-columns: 8px 70px minmax(0, 1fr) auto 30px; gap: 8px; }
     .finding-body { padding-left: 12px; }
     .gutter { width: 44px; }
     header .sub { display: none; }
@@ -240,7 +258,9 @@
   let report = null;          // last report from the server
   let analyzedCode = null;    // the code that report describes
   let activeLine = null;
-  const filters = { category: null, severity: null };
+  const filters = { category: null, severity: null, cwe: null };
+  const QUALITY_HINT = "MITRE classifies this as a code-quality weakness: it describes the problem, " +
+                       "but MITRE says not to use it to label security vulnerabilities.";
 
   // ------------------------------------------------------------ helpers
   const escapeHtml = s => String(s ?? "").replace(/[&<>"']/g, c =>
@@ -370,7 +390,7 @@
       report = data;
       analyzedCode = code;
       activeLine = null;
-      filters.category = filters.severity = null;
+      filters.category = filters.severity = filters.cwe = null;
       renderResults();
       renderEditorDecorations(true);
       resultsPanel.classList.remove("is-stale");
@@ -441,7 +461,8 @@
       </div>
       <div class="section-title">Categories</div>
       <div class="cats">${cats}</div>
-      <div class="section-title">Findings</div>
+      ${renderCweSection(r)}
+      <div class="section-title" id="findings-title">Findings</div>
       <div id="findings-area"></div>
     </div>`;
 
@@ -452,14 +473,44 @@
     renderFindings();
   }
 
+  function renderCweSection(r) {
+    if (!r.cwe_summary.length) return "";
+    const qualityCount = r.cwe_summary.filter(c => c.quality_only).length;
+    const rows = r.cwe_summary.map(c => `
+      <button class="cwe-row sev-${c.worst_severity} ${filters.cwe === c.id ? "active" : ""}" data-cwe="${c.id}"
+              title="${escapeHtml(`${c.id}: ${c.name}`)}">
+        <span class="dot"></span>
+        <span class="cwe-id">${c.id}</span>
+        <span class="cwe-short">${escapeHtml(c.short)}</span>
+        <span>${c.quality_only ? `<span class="quality-tag" title="${escapeHtml(QUALITY_HINT)}">quality</span>` : ""}</span>
+        <span class="cwe-count">×${c.count}</span>
+      </button>`).join("");
+    return `
+      <div class="section-title">Weaknesses (CWE)</div>
+      <p class="cwe-note">${plural(r.cwe_summary.length, "distinct CWE")} across ${r.cwe_coverage.mapped} of
+        ${plural(r.cwe_coverage.total, "finding")}${qualityCount ? `; ${qualityCount} tagged <span class="quality-tag">quality</span> are code-quality weaknesses, not vulnerabilities` : ""}. Click one to filter.</p>
+      <div class="cwe-list">${rows}</div>`;
+  }
+
+  function cweTags(f) {
+    if (!f.cwe.length) return "";
+    return `<div class="cwe-tags">${f.cwe.map(c => `
+      <a class="cwe-pill sev-${f.severity} ${c.quality_only ? "quality" : ""}" href="${escapeHtml(c.url)}" target="_blank"
+         rel="noopener" title="${escapeHtml(`${c.id}: ${c.name}`)}"><b>${c.id}</b>${escapeHtml(c.short)}</a>`).join("")}</div>`;
+  }
+
   function renderFindings() {
     const area = $("#findings-area");
     if (!area || !report?.ok) return;
-    const inCategory = report.findings.filter(f => !filters.category || f.category === filters.category);
+    const inCategory = report.findings.filter(f =>
+      (!filters.category || f.category === filters.category) && (!filters.cwe || f.cwe[0]?.id === filters.cwe));
     const counts = Object.fromEntries(SEVERITIES.map(sv => [sv, inCategory.filter(f => f.severity === sv).length]));
     const shown = inCategory.filter(f => !filters.severity || f.severity === filters.severity);
 
-    const chips = [`<button class="chip ${filters.severity ? "" : "active"}" data-sev="">All <b>${inCategory.length}</b></button>`]
+    const active = [filters.cwe && ["cwe", filters.cwe], filters.category && ["category", filters.category]].filter(Boolean);
+    const clearChips = active.map(([key, label]) =>
+      `<button class="chip active" data-clear="${key}" title="Clear this filter">${escapeHtml(label)} ✕</button>`);
+    const chips = clearChips.concat([`<button class="chip ${filters.severity ? "" : "active"}" data-sev="">All <b>${inCategory.length}</b></button>`])
       .concat(SEVERITIES.filter(sv => counts[sv]).map(sv =>
         `<button class="chip sev-${sv} ${filters.severity === sv ? "active" : ""}" data-sev="${sv}">
           <span class="dot"></span>${sv[0].toUpperCase() + sv.slice(1)} <b>${counts[sv]}</b></button>`)).join("");
@@ -479,11 +530,14 @@
           </button>
           <div class="finding-body">
             <p class="msg">${richText(f.message)}</p>
+            ${cweTags(f)}
             ${f.snippet ? `<code class="snippet">${escapeHtml(f.snippet)}</code>` : ""}
             <details ${i === 0 && ["critical", "high"].includes(f.severity) ? "open" : ""}>
               <summary>Why it matters &amp; how to fix</summary>
               <p><b>Why:</b> ${richText(f.why)}</p>
               <p><b>Fix:</b> ${richText(f.fix)}</p>
+              ${f.cwe.map(c => `<p><b>${c.id}:</b> ${escapeHtml(c.name)}
+                ${c.quality_only ? `<span class="quality-tag" title="${escapeHtml(QUALITY_HINT)}">quality</span>` : ""}</p>`).join("")}
               ${f.ref ? `<p>${refLink(f.ref)}</p>` : ""}
             </details>
           </div>
@@ -510,6 +564,22 @@
       filters.category = filters.category === cat.dataset.cat ? null : cat.dataset.cat;
       filters.severity = null;
       resultsEl.querySelectorAll(".cat").forEach(el => el.classList.toggle("active", el.dataset.cat === filters.category));
+      return renderFindings();
+    }
+    const cweRow = e.target.closest(".cwe-row");
+    if (cweRow) {
+      filters.cwe = filters.cwe === cweRow.dataset.cwe ? null : cweRow.dataset.cwe;
+      filters.severity = null;
+      resultsEl.querySelectorAll(".cwe-row").forEach(el => el.classList.toggle("active", el.dataset.cwe === filters.cwe));
+      renderFindings();
+      if (filters.cwe) $("#findings-title")?.scrollIntoView({ block: "start", behavior: "smooth" });
+      return;
+    }
+    const clear = e.target.closest("[data-clear]");
+    if (clear) {
+      filters[clear.dataset.clear] = null;
+      resultsEl.querySelectorAll(clear.dataset.clear === "cwe" ? ".cwe-row" : ".cat")
+        .forEach(el => el.classList.remove("active"));
       return renderFindings();
     }
     const chip = e.target.closest(".chip");
@@ -545,7 +615,13 @@
   $("#rules-btn").addEventListener("click", async () => {
     dialog.showModal();
     try {
-      const { policy, rules } = await (await fetch("/api/policy")).json();
+      const { policy, rules, cwes } = await (await fetch("/api/policy")).json();
+      const mappedRules = rules.filter(r => r.cwe.length).length;
+      const cweCell = r => r.cwe.length ? r.cwe.map(id => {
+        const c = cwes[id];
+        return `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener" title="${escapeHtml(c.name)}">${id}</a>` +
+               (c.quality_only ? ` <span class="quality-tag" title="${escapeHtml(QUALITY_HINT)}">quality</span>` : "");
+      }).join("<br>") : `<span class="meta" title="No CWE entry describes this accurately">none</span>`;
       $("#policy-title").textContent = policy.name;
       const weights = Object.entries(policy.weights).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(" · ");
       const limits = policy.limits;
@@ -555,11 +631,12 @@
           <div class="fact"><b>Category weights</b>${weights}</div>
           <div class="fact"><b>Limits</b>${limits.max_function_lines} lines/function · complexity ${limits.max_complexity} · ${limits.max_params} params · nesting ${limits.max_nesting}</div>
           <div class="fact"><b>Penalty per finding</b>${Object.entries(policy.penalties).map(([k, v]) => `${k} −${v}`).join(" · ")}</div>
+          <div class="fact"><b>CWE coverage</b>${mappedRules} of ${rules.length} rules map to a CWE (checked against MITRE CWE 5.0)</div>
         </div>
-        <p class="meta">Edit <code>checker/policy.json</code> to change any of this. ${rules.length} rules.</p>
-        <table><thead><tr><th>Rule</th><th>Severity</th><th>Category</th><th>Checks for</th><th>Ref</th></tr></thead><tbody>
+        <p class="meta">Edit <code>checker/policy.json</code> to change the policy and <code>checker/cwe.py</code> for CWE mappings.</p>
+        <table><thead><tr><th>Rule</th><th>Severity</th><th>Category</th><th>Checks for</th><th>CWE</th></tr></thead><tbody>
         ${rules.map(r => `<tr><td><code>${r.id}</code></td><td class="sev-cell sev-${r.severity}">${r.severity}</td>
-          <td style="text-transform:capitalize">${r.category}</td><td>${escapeHtml(r.title)}</td><td>${refLink(r.ref)}</td></tr>`).join("")}
+          <td style="text-transform:capitalize">${r.category}</td><td>${escapeHtml(r.title)}</td><td>${cweCell(r)}</td></tr>`).join("")}
         </tbody></table>`;
     } catch {
       $("#rules-body").textContent = "Could not load the policy. Is the server running?";

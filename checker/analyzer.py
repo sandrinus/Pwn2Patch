@@ -18,7 +18,12 @@ SECRET_NAME = re.compile(
     r"(?:^|_)(passw(?:or)?d|pwd|secret|api_?key|access_?key|private_?key|auth_?token|"
     r"access_?token|token|credentials?)(?:_|$)"
 )
+PASSWORD_NAME = re.compile(r"(?:^|_)(passw(?:or)?d|pwd|pw)(?:_|$)")
 CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+# Context-specific CWEs: more precise than the rule's default mapping.
+PASSWORD_SECRET_CWES = ("CWE-259", "CWE-798")   # hard-coded *password* (child of hard-coded credentials)
+PASSWORD_HASH_CWES = ("CWE-916", "CWE-328")     # weak hash used *for passwords*
 NOT_A_SECRET = {"bearer", "basic", "token", "password", "secret", "api_key", "apikey"}
 SNAKE_CASE = re.compile(r"^_{0,2}[a-z][a-z0-9_]*$")
 PASCAL_CASE = re.compile(r"^_{0,2}[A-Z][A-Za-z0-9]*$")
@@ -45,9 +50,23 @@ class Finding:
     col: int
     message: str
     snippet: str = ""
+    cwe: tuple[str, ...] = ()  # overrides the rule's CWE mapping when the context is more specific
 
 
 # --------------------------------------------------------------------- helpers
+def snake(name: str) -> str:
+    """`apiKey` -> `api_key`, `DB_PASSWORD` -> `db_password`."""
+    return CAMEL_BOUNDARY.sub("_", name).lower()
+
+
+def is_password_name(name: str) -> bool:
+    return bool(PASSWORD_NAME.search(snake(name)))
+
+
+def secret_cwes(name: str) -> tuple[str, ...]:
+    return PASSWORD_SECRET_CWES if is_password_name(name) else ()
+
+
 def dotted_name(node: ast.AST) -> str:
     """Turn `a.b.c` / `foo().bar` into a readable dotted name."""
     parts = []
@@ -116,7 +135,7 @@ def is_main_guard(node: ast.If) -> bool:
 
 
 def looks_like_secret(name: str, value: ast.AST) -> bool:
-    if not SECRET_NAME.search(CAMEL_BOUNDARY.sub("_", name).lower()):
+    if not SECRET_NAME.search(snake(name)):
         return False
     if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
         return False
@@ -149,7 +168,7 @@ class PythonAnalyzer(ast.NodeVisitor):
         self.findings.sort(key=lambda f: (f.line, f.col))
         return self.findings
 
-    def report(self, rule_id: str, node_or_line, message: str) -> None:
+    def report(self, rule_id: str, node_or_line, message: str, cwe: tuple[str, ...] = ()) -> None:
         if rule_id in self.disabled:
             return
         if isinstance(node_or_line, int):
@@ -160,7 +179,7 @@ class PythonAnalyzer(ast.NodeVisitor):
             return
         self._seen.add((rule_id, line))
         snippet = self.lines[line - 1].strip()[:140] if 0 < line <= len(self.lines) else ""
-        self.findings.append(Finding(rule_id, line, col + 1, message, snippet))
+        self.findings.append(Finding(rule_id, line, col + 1, message, snippet, cwe))
 
     # ------------------------------------------------------------- nesting
     def _enter_block(self, node: ast.AST) -> None:
@@ -254,7 +273,8 @@ class PythonAnalyzer(ast.NodeVisitor):
             if mutable:
                 self.report("REL002", default, f"`{name}` uses a mutable default for `{param.arg}`.")
             if looks_like_secret(param.arg, default):
-                self.report("SEC004", default, f"Parameter `{param.arg}` has a hardcoded default value.")
+                self.report("SEC004", default, f"Parameter `{param.arg}` has a hardcoded default value.",
+                            cwe=secret_cwes(param.arg))
 
         if is_public and ast.get_docstring(node) is None:
             self.report("STY001", node, f"Public function `{name}` has no docstring.")
@@ -305,7 +325,8 @@ class PythonAnalyzer(ast.NodeVisitor):
         # SEC004 secrets passed as keyword arguments, e.g. connect(password="...")
         for kw in node.keywords:
             if kw.arg and looks_like_secret(kw.arg, kw.value):
-                self.report("SEC004", kw.value, f"Hardcoded value passed as `{kw.arg}=`.")
+                self.report("SEC004", kw.value, f"Hardcoded value passed as `{kw.arg}=`.",
+                            cwe=secret_cwes(kw.arg))
 
         # SEC005 unsafe deserialization
         if name in DESERIALIZERS:
@@ -323,11 +344,16 @@ class PythonAnalyzer(ast.NodeVisitor):
 
         # SEC007 weak hashes (skip when explicitly marked not-for-security)
         if not is_const(keyword_value(node, "usedforsecurity"), False):
-            if name in WEAK_HASHES:
-                self.report("SEC007", node, f"`{name}()` is a broken hash algorithm.")
-            elif name == "hashlib.new" and isinstance(first, ast.Constant) \
-                    and str(first.value).lower() in ("md5", "sha1"):
-                self.report("SEC007", node, f"`hashlib.new(\"{first.value}\")` is a broken hash algorithm.")
+            weak = name in WEAK_HASHES or (
+                name == "hashlib.new" and isinstance(first, ast.Constant)
+                and str(first.value).lower() in ("md5", "sha1")
+            )
+            label = f"{name}()" if name in WEAK_HASHES else f"hashlib.new(\"{getattr(first, 'value', '')}\")"
+            if weak and self._hashes_password(node):
+                self.report("SEC007", node, f"`{label}` is a broken hash algorithm, used here on a password.",
+                            cwe=PASSWORD_HASH_CWES)
+            elif weak:
+                self.report("SEC007", node, f"`{label}` is a broken hash algorithm.")
 
         # SEC008 debug mode
         if short == "run" and is_const(keyword_value(node, "debug"), True):
@@ -343,6 +369,12 @@ class PythonAnalyzer(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+    def _hashes_password(self, call: ast.Call) -> bool:
+        """True if the hash runs inside a password-named function or on a password-named variable."""
+        if self._func_stack and is_password_name(self._func_stack[-1].name):
+            return True
+        return any(isinstance(n, ast.Name) and is_password_name(n.id) for n in ast.walk(call))
+
     # ------------------------------------------------------------- assignments
     def _check_assignment_target(self, target: ast.AST, value: ast.AST) -> None:
         name = target.id if isinstance(target, ast.Name) else \
@@ -350,7 +382,7 @@ class PythonAnalyzer(ast.NodeVisitor):
         if name is None:
             return
         if looks_like_secret(name, value):
-            self.report("SEC004", target, f"`{name}` is assigned a hardcoded value.")
+            self.report("SEC004", target, f"`{name}` is assigned a hardcoded value.", cwe=secret_cwes(name))
         if isinstance(target, ast.Attribute) and name == "debug" and is_const(value, True):
             self.report("SEC008", target, f"`{dotted_name(target)} = True` enables debug mode.")
         if isinstance(target, ast.Name):
@@ -379,7 +411,8 @@ class PythonAnalyzer(ast.NodeVisitor):
     def visit_Dict(self, node: ast.Dict) -> None:
         for key, value in zip(node.keys, node.values):
             if isinstance(key, ast.Constant) and isinstance(key.value, str) and looks_like_secret(key.value, value):
-                self.report("SEC004", value, f"Dictionary key `{key.value}` holds a hardcoded value.")
+                self.report("SEC004", value, f"Dictionary key `{key.value}` holds a hardcoded value.",
+                            cwe=secret_cwes(key.value))
         self.generic_visit(node)
 
     # ------------------------------------------------------------- misc

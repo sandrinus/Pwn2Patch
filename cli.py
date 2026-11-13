@@ -54,9 +54,24 @@ def print_report(path: Path, report: dict) -> None:
     print()
     for f in report["findings"]:
         sev = f["severity"].upper().ljust(8)
-        print(f"  {paint(sev, f['severity'])}  {f['rule_id']}  line {str(f['line']).ljust(4)} {f['message']}")
+        cwe = (f["cwe"][0]["id"] if f["cwe"] else "-").ljust(9)
+        print(f"  {paint(sev, f['severity'])}  {f['rule_id']}  {cwe} line {str(f['line']).ljust(4)} {f['message']}")
         if f["severity"] in ("critical", "high"):
-            print(paint(f"{'':22}fix: {f['fix']}", "dim"))
+            print(paint(f"{'':30}fix: {f['fix']}", "dim"))
+    print()
+    print_cwe_summary(report)
+
+
+def print_cwe_summary(report: dict) -> None:
+    rows = report.get("cwe_summary") or []
+    if not rows:
+        return
+    coverage = report["cwe_coverage"]
+    print(paint(f"  Weaknesses: {len(rows)} distinct CWEs across "
+                f"{coverage['mapped']}/{coverage['total']} findings", "bold"))
+    for row in rows:
+        tag = paint("  (quality, not a vulnerability)", "dim") if row["quality_only"] else ""
+        print(f"    {paint(row['id'].ljust(9), row['worst_severity'])} x{str(row['count']).ljust(3)} {row['short']}{tag}")
     print()
 
 

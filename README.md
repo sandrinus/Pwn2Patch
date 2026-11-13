@@ -39,7 +39,8 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 
 | File | What it does |
 |---|---|
-| `checker/rules.py` | Rule catalog: id, category, severity, why, fix, CWE/PEP reference |
+| `checker/rules.py` | Rule catalog: id, category, severity, why, fix, CWE mapping, PEP reference |
+| `checker/cwe.py` | CWE catalog: official MITRE titles, short labels, MITRE's mapping guidance |
 | `checker/analyzer.py` | Walks the AST and reports rule violations with line numbers |
 | `checker/scoring.py` | Category scores → weighted overall score → grade → PASS/FAIL gate |
 | `checker/policy.json` | The "compliance policy": weights, penalties, limits, gate, disabled rules |
@@ -67,9 +68,39 @@ It's deterministic: the same code always gets the same score.
 | Maintainability | long functions, cyclomatic complexity, too many params, deep nesting, wildcard imports, `global` |
 | Style | docstrings, naming, line length, `print` vs logging, TODO/FIXME, type hints |
 
+### CWE mapping
+
+Every finding carries a list of [CWE](https://cwe.mitre.org) entries, most specific first, and the report includes
+a `cwe_summary` (one row per weakness, with counts) and `cwe_coverage` (how many findings have a CWE).
+
+* **19 of 25 rules map to a CWE.** All titles were checked against MITRE (CWE 5.0).
+  The other 6 rules have no accurate CWE: mutable defaults, `== None`, function length, wildcard imports, `print` and type hints.
+  They're left unmapped on purpose, since a forced mapping would be misleading.
+* **Context makes it more specific.** A hardcoded *password* maps to CWE-259 (Hard-coded Password), not just
+  CWE-798 (Hard-coded Credentials). MD5 used *on a password* maps to CWE-916 (weak password hashing), not just
+  CWE-328 (weak hash).
+* **Quality vs. vulnerability.** MITRE marks some CWEs as *Prohibited* for vulnerability mapping because they
+  describe code quality, not security (CWE-1121 complexity, CWE-1124 nesting, CWE-1064 parameters,
+  CWE-1099 naming, CWE-1078 style, CWE-1111 documentation). We still show them, tagged **quality**, so nobody
+  mistakes them for vulnerabilities. A test enforces that security rules never use one.
+
+| Rule | CWE | Rule | CWE |
+|---|---|---|---|
+| SEC001 eval/exec | CWE-95 | REL001 bare except | CWE-396 |
+| SEC002 shell injection | CWE-78 | REL003 swallowed exception | CWE-1069, CWE-390 |
+| SEC003 SQL injection | CWE-89 | REL004 open() without with | CWE-775 |
+| SEC004 hardcoded secret | CWE-798 (CWE-259 for passwords) | MNT002 complexity | CWE-1121 *(quality)* |
+| SEC005 deserialization | CWE-502 | MNT003 too many params | CWE-1064 *(quality)* |
+| SEC006 verify=False | CWE-295 | MNT004 deep nesting | CWE-1124 *(quality)* |
+| SEC007 weak hash | CWE-328 (CWE-916 for passwords) | MNT006 global | CWE-1108 |
+| SEC008 debug mode | CWE-489 | STY001 docstring | CWE-1111 *(quality)* |
+| STY002 naming | CWE-1099 *(quality)* | STY003 line length | CWE-1078 *(quality)* |
+| STY005 TODO/FIXME | CWE-546 | | |
+
 ## Adding a rule
 
-1. Add a `Rule(...)` to `checker/rules.py` (id, title, category, severity, why, fix, ref).
+1. Add a `Rule(...)` to `checker/rules.py` (id, title, category, severity, why, fix, ref, `cwe=(...)`).
+   If it needs a CWE that isn't in `checker/cwe.py` yet, add it there with the exact title from cwe.mitre.org.
 2. Detect it in `checker/analyzer.py`, usually in a `visit_*` method, and call `self.report("ID", node, "message")`.
 3. Add a test in `tests/test_checker.py`.
 

@@ -7,7 +7,7 @@ Endpoints
     GET  /               the web UI (static/index.html)
     POST /api/analyze    {"code": "..."}  ->  analysis report (JSON)
     GET  /api/samples    {"bad_example": "...", "good_example": "..."}
-    GET  /api/policy     the active policy plus the full rule catalog
+    GET  /api/policy     the active policy, the full rule catalog and the CWE catalog
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from checker import RULES, analyze, load_policy
+from checker import CWES, RULES, analyze, load_policy
 
 ROOT = Path(__file__).resolve().parent
 INDEX_HTML = ROOT / "static" / "index.html"
@@ -38,7 +38,11 @@ class Handler(BaseHTTPRequestHandler):
             samples = {p.stem: p.read_text(encoding="utf-8") for p in sorted(SAMPLES_DIR.glob("*.py"))}
             self._send_json(samples)
         elif path == "/api/policy":
-            self._send_json({"policy": POLICY, "rules": [rule.to_dict() for rule in RULES.values()]})
+            self._send_json({
+                "policy": POLICY,
+                "rules": [rule.to_dict() for rule in RULES.values()],
+                "cwes": {cwe_id: cwe.to_dict() for cwe_id, cwe in CWES.items()},
+            })
         else:
             self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 

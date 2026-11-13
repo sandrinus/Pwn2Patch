@@ -5,7 +5,8 @@ import ast
 import json
 from pathlib import Path
 
-from .analyzer import PythonAnalyzer
+from .analyzer import Finding, PythonAnalyzer
+from .cwe import CWES
 from .rules import RULES, SEVERITIES
 from .scoring import score_findings
 
@@ -24,6 +25,29 @@ def _error_report(kind: str, message: str, line: int | None = None, col: int | N
         "error": {"type": kind, "message": message, "line": line, "col": col},
         "gate": {"status": "FAIL", "reasons": ["The code could not be analyzed"]},
     }
+
+
+def cwe_ids_for(finding: Finding) -> tuple[str, ...]:
+    """The finding's own CWE mapping if the analyzer gave one, otherwise the rule's."""
+    return finding.cwe or RULES[finding.rule_id].cwe
+
+
+def cwe_summary(findings: list[dict]) -> list[dict]:
+    """One row per distinct CWE (by each finding's primary CWE), worst severity first."""
+    severity_rank = {sev: i for i, sev in enumerate(SEVERITIES)}
+    rows: dict[str, dict] = {}
+    for f in findings:
+        if not f["cwe"]:
+            continue
+        primary = f["cwe"][0]
+        row = rows.setdefault(primary["id"], {**primary, "count": 0, "worst_severity": f["severity"],
+                                              "rules": []})
+        row["count"] += 1
+        if severity_rank[f["severity"]] < severity_rank[row["worst_severity"]]:
+            row["worst_severity"] = f["severity"]
+        if f["rule_id"] not in row["rules"]:
+            row["rules"].append(f["rule_id"])
+    return sorted(rows.values(), key=lambda r: (severity_rank[r["worst_severity"]], -r["count"], r["id"]))
 
 
 def analyze(source: str, policy: dict | None = None) -> dict:
@@ -67,14 +91,18 @@ def analyze(source: str, policy: dict | None = None) -> dict:
             "why": rule.why,
             "fix": rule.fix,
             "ref": rule.ref,
+            "cwe": [CWES[cwe_id].to_dict() for cwe_id in cwe_ids_for(f)],
         })
     findings_out.sort(key=lambda item: (severity_rank[item["severity"]], item["line"]))
 
+    mapped = sum(1 for f in findings_out if f["cwe"])
     return {
         "ok": True,
         "language": "python",
         "policy": policy.get("name", "custom"),
         "stats": stats,
         **score_findings(findings, policy),
+        "cwe_summary": cwe_summary(findings_out),
+        "cwe_coverage": {"mapped": mapped, "total": len(findings_out)},
         "findings": findings_out,
     }
