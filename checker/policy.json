@@ -1,5 +1,5 @@
 {
-  "name": "RITSEC x SSE default policy",
+  "name": "Default Policy",
   "weights": {
     "security": 0.4,
     "reliability": 0.25,
