@@ -213,6 +213,11 @@
   .fix-btn { border: 1px solid color-mix(in srgb, var(--good) 50%, var(--border)); color: var(--good); background: color-mix(in srgb, var(--good) 8%, transparent); border-radius: 6px; padding: 3px 10px; font-size: 12.5px; font-weight: 600; }
   .fix-btn:hover { background: color-mix(in srgb, var(--good) 16%, transparent); }
   .manual { font-size: 12px; color: var(--faint); }
+  /* Workers AI: Cloudflare orange */
+  .ai-btn { --cf: #f38020; border: 1px solid color-mix(in srgb, var(--cf) 55%, var(--border)); color: var(--cf); background: color-mix(in srgb, var(--cf) 8%, transparent); border-radius: 6px; padding: 3px 10px; font-size: 12.5px; font-weight: 600; }
+  .ai-btn:hover { background: color-mix(in srgb, var(--cf) 16%, transparent); }
+  .ai-btn:disabled { opacity: .6; cursor: progress; }
+  .ai-badge { display: inline-block; font-size: 11.5px; font-weight: 700; color: #f38020; border: 1px solid color-mix(in srgb, #f38020 50%, transparent); border-radius: 999px; padding: 1px 8px; margin-right: 6px; }
   .patch-all { background: var(--good); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 700; font-size: 13px; }
   :root[data-theme="dark"] .patch-all { color: #0f1115; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .patch-all { color: #0f1115; } }
@@ -346,6 +351,7 @@
   let requestSeq = 0;         // ignore responses that arrive after a newer request
   let liveTimer = null;
   const undoStack = [];
+  let aiStatus = { enabled: false, model: "" };  // from /api/policy: is Workers AI patching configured?
   const filters = { category: null, severity: null, cwe: null, fixable: false };
   const isMac = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || "");
   const storage = {
@@ -533,7 +539,7 @@
           <span class="sev">${f.severity}</span><b>${escapeHtml(f.title)}</b>
           <p>${richText(f.message)}</p>
           ${f.fix ? `<button class="fix-btn" data-fix="${report.findings.indexOf(f)}">Preview fix</button>`
-                  : `<span class="manual">No auto-patch: see the report</span>`}
+                  : aiButton(f) || `<span class="manual">No auto-patch: see the report</span>`}
         </div>`).join("");
       hovercard.classList.add("show");
     }
@@ -547,6 +553,8 @@
   hovercard.addEventListener("click", e => {
     const btn = e.target.closest("[data-fix]");
     if (btn) { hideHovercard(); previewFix(report.findings[Number(btn.dataset.fix)]); }
+    const ai = e.target.closest("[data-ai]");
+    if (ai) askAI(report.findings[Number(ai.dataset.ai)], ai);
   });
 
   ruler.addEventListener("click", e => {
@@ -778,7 +786,7 @@
             <p class="msg">${richText(f.message)}</p>
             <div class="finding-actions">
               ${f.fix ? `<button class="fix-btn" data-fix="${report.findings.indexOf(f)}">🔧 Preview fix</button>`
-                      : `<span class="manual">${f.category === "security" ? "No safe auto-patch: needs a human" : "Manual fix"}</span>`}
+                      : `<span class="manual">${f.category === "security" ? "No safe auto-patch: needs a human" : "Manual fix"}</span>${aiButton(f)}`}
             </div>
             ${cweTags(f)}
             ${f.snippet ? `<code class="snippet">${escapeHtml(f.snippet)}</code>` : ""}
@@ -818,6 +826,8 @@
   resultsEl.addEventListener("click", e => {
     const fixBtn = e.target.closest("[data-fix]");
     if (fixBtn) return previewFix(report.findings[Number(fixBtn.dataset.fix)]);
+    const aiBtn = e.target.closest("[data-ai]");
+    if (aiBtn) return askAI(report.findings[Number(aiBtn.dataset.ai)], aiBtn);
     if (e.target.closest("[data-fixable]")) {
       filters.fixable = !filters.fixable;
       filters.severity = null;
@@ -900,17 +910,51 @@
     }).join("");
   }
 
-  function previewFix(f) {
+  // ---- Workers AI: a drafted patch for findings with no mechanical fix, verified server-side
+  function aiButton(f) {
+    if (!aiStatus.enabled || f.fix || !report) return "";
+    return `<button class="ai-btn" data-ai="${report.findings.indexOf(f)}"
+      title="Ask ${escapeHtml(aiStatus.model)} on Cloudflare Workers AI for a patch. Pwn2Patch re-checks it before showing it.">✨ Ask Workers AI</button>`;
+  }
+
+  let aiBusy = false;
+  async function askAI(f, btn) {
+    if (!f || !isFresh()) return toast("The code changed. Re-analyze before patching.");
+    if (aiBusy) return;
+    aiBusy = true;
+    hideHovercard();
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = "Asking Workers AI…"; }
+    const code = analyzedCode;
+    try {
+      const result = await postJson("/api/ai-fix", { code, rule_id: f.rule_id, line: f.line });
+      if (code !== codeEl.value) return toast("The code changed while Workers AI was working. Ask again.");
+      previewFix({ ...f, fix: result.fix }, result);
+    } catch (err) {
+      toast(`Workers AI: ${err.message}`);
+    } finally {
+      aiBusy = false;
+      if (btn?.isConnected) { btn.disabled = false; btn.textContent = label; }
+    }
+  }
+
+  // ai: the /api/ai-fix result when the patch was drafted by Workers AI
+  function previewFix(f, ai = null) {
     if (!f?.fix || !isFresh()) return toast("The code changed. Re-analyze before patching.");
-    pendingPatch = { code: applyEdits(analyzedCode, f.fix.edits), label: f.fix.title };
+    pendingPatch = { code: applyEdits(analyzedCode, f.fix.edits), label: ai ? "AI patch" : f.fix.title };
     $("#diff-title").textContent = f.fix.title;
     $("#diff-body").innerHTML = `
-      <p class="score-preview"><span class="sev sev-${f.severity}" style="width:auto">${f.severity}</span>
+      <p class="score-preview">${ai ? `<span class="ai-badge" title="${escapeHtml(ai.model)}">✨ Workers AI</span>` : ""}
+        <span class="sev sev-${f.severity}" style="width:auto">${f.severity}</span>
         ${escapeHtml(f.title)} · line ${f.line}</p>
       ${f.fix.note ? `<p class="fix-note">${richText(f.fix.note)}</p>` : ""}
+      ${ai ? `<p class="fix-note">Drafted by <code>${escapeHtml(ai.model)}</code>${ai.attempts > 1 ? ` (${ai.attempts} tries)` : ""}.
+        Pwn2Patch re-analyzed the result: it parses, ${escapeHtml(f.rule_id)} is gone, and nothing critical or high was added.
+        Review it like any code from a stranger.</p>` : ""}
       <div class="diff">${editsToDiff(analyzedCode, f.fix.edits)}</div>`;
-    const gain = f.points?.gain_if_fixed ?? 0;
-    $("#diff-meta").textContent = gain > 0 ? `Raises the overall score by about ${gain}`
+    const gain = ai ? ai.score_after - ai.score_before : f.points?.gain_if_fixed ?? 0;
+    $("#diff-meta").textContent = ai ? (gain > 0 ? `Score ${ai.score_before} → ${ai.score_after}` : "Verified, but doesn't change the score")
+      : gain > 0 ? `Raises the overall score by about ${gain}`
       : f.points?.category_clamped ? `${f.category[0].toUpperCase() + f.category.slice(1)} is already at 0: fix a few more to see the score move`
       : "Doesn't change the score, but it's still worth fixing";
     diffDialog.showModal();
@@ -1042,7 +1086,11 @@
 
   // ------------------------------------------------------------ start
   let perRuleCap = 3;
-  fetch("/api/policy").then(r => r.json()).then(d => { perRuleCap = d.policy.max_counted_per_rule ?? 3; }).catch(() => {});
+  fetch("/api/policy").then(r => r.json()).then(d => {
+    perRuleCap = d.policy.max_counted_per_rule ?? 3;
+    aiStatus = d.ai || aiStatus;
+    if (aiStatus.enabled && report) renderFindings();
+  }).catch(() => {});
   measureChar();
   document.fonts?.ready.then(() => { measureChar(); renderEditorDecorations(true); });
   renderEmpty();

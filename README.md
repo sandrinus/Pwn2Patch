@@ -32,6 +32,33 @@ a route that lets the user choose the program to run, MD5 on a password (SHA-256
 needs bcrypt/argon2 and a salt), a hardcoded default parameter (an API change), long or complex functions.
 *Patch all* applies fixes one at a time and re-analyzes after each, so they never conflict.
 
+### AI patches with Cloudflare Workers AI
+
+For the findings above that get no mechanical fix, the UI shows **✨ Ask Workers AI**. The rules still decide
+*what* is wrong, so the score stays deterministic; a Workers AI model only drafts *how* to fix it, and
+Pwn2Patch doesn't trust the draft. `checker/ai_fix.py` accepts it only if:
+
+1. it is one edit of at most 60 lines that covers the reported line (plus optional new `import` lines),
+2. the patched code still parses,
+3. re-running the analyzer shows the finding gone, and
+4. no new critical/high finding appears and the overall score doesn't drop.
+
+If a draft fails, the model gets the analyzer's reason and one more try. The code is still never executed,
+neither yours nor the model's. The model is told the pasted code is untrusted data, and anything it sends back
+goes through the same checks either way.
+
+To turn it on, create a Cloudflare API token with **Workers AI Read + Edit**, then:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID=...
+export CLOUDFLARE_API_TOKEN=...
+export PWN2PATCH_AI_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast   # optional, this is the default
+python server.py
+```
+
+The server prints whether AI patching is on. Without the variables, the button is hidden and everything else
+works as before. The code is sent to Cloudflare, so don't paste anything you can't share.
+
 Command line / CI (exit code 1 when the gate fails):
 
 ```bash
@@ -61,8 +88,9 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 | `checker/scoring.py` | Category scores → weighted overall score → grade → PASS/FAIL gate |
 | `checker/policy.json` | The "compliance policy": weights, penalties, limits, gate, disabled rules |
 | `checker/engine.py` | `analyze(source) -> dict`: the one function everything else calls |
+| `checker/ai_fix.py` | Workers AI patches for findings with no mechanical fix, verified by the analyzer |
 | `checker/fixes.py` | Automatic patches: line edits per finding, verified to parse; `fix_all` for *Patch all* |
-| `server.py` | Standard-library HTTP server: `POST /api/analyze`, `POST /api/fix`, `GET /api/policy`, `GET /api/samples` |
+| `server.py` | Standard-library HTTP server: `POST /api/analyze`, `POST /api/fix`, `POST /api/ai-fix`, `GET /api/policy`, `GET /api/samples` |
 | `cli.py` | Terminal output + exit codes for CI |
 | `static/index.html` | The whole UI: editor with underlines and hover cards, score ring and change badge, fix previews, filters, policy viewer |
 

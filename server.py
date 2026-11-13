@@ -7,8 +7,10 @@ Endpoints
     GET  /               the web UI (static/index.html)
     POST /api/analyze    {"code": "..."}  ->  analysis report (JSON)
     POST /api/fix        {"code": "..."}  ->  every automatic fix applied, with a diff
+    POST /api/ai-fix     {"code": "...", "rule_id": "SEC007", "line": 30}
+                         ->  a Workers AI patch for one finding, verified by the analyzer
     GET  /api/samples    {"bad_example": "...", "good_example": "..."}
-    GET  /api/policy     the active policy, the full rule catalog and the CWE catalog
+    GET  /api/policy     the active policy, the rule and CWE catalogs, and whether AI patching is on
 """
 from __future__ import annotations
 
@@ -19,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from checker import CWES, RULES, analyze, load_policy, patch_all
+from checker.ai_fix import ai_fix, ai_status
 
 ROOT = Path(__file__).resolve().parent
 INDEX_HTML = ROOT / "static" / "index.html"
@@ -43,14 +46,15 @@ class Handler(BaseHTTPRequestHandler):
                 "policy": POLICY,
                 "rules": [rule.to_dict() for rule in RULES.values()],
                 "cwes": {cwe_id: cwe.to_dict() for cwe_id, cwe in CWES.items()},
+                "ai": ai_status(),
             })
         else:
             self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
-        handlers = {"/api/analyze": analyze, "/api/fix": patch_all}
-        handler = handlers.get(self.path.split("?", 1)[0])
-        if handler is None:
+        path = self.path.split("?", 1)[0]
+        handlers = {"/api/analyze": analyze, "/api/fix": patch_all, "/api/ai-fix": None}
+        if path not in handlers:
             self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
             return
         try:
@@ -70,7 +74,24 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(code, str):
             self._send_json({"error": "Expected {\"code\": \"...\"}"}, HTTPStatus.BAD_REQUEST)
             return
-        self._send_json(handler(code, POLICY))
+        if path == "/api/ai-fix":
+            self._ai_fix(code, payload)
+        else:
+            self._send_json(handlers[path](code, POLICY))
+
+    def _ai_fix(self, code: str, payload: dict) -> None:
+        rule_id, line = payload.get("rule_id"), payload.get("line")
+        if not isinstance(rule_id, str) or not isinstance(line, int):
+            self._send_json({"error": "Expected {\"code\", \"rule_id\", \"line\"}"}, HTTPStatus.BAD_REQUEST)
+            return
+        result = ai_fix(code, rule_id, line, POLICY)
+        if result["ok"]:
+            self._send_json(result)
+            return
+        status = {"not_configured": HTTPStatus.SERVICE_UNAVAILABLE, "ai_error": HTTPStatus.BAD_GATEWAY,
+                  "not_found": HTTPStatus.CONFLICT}.get(result["error"]["type"], HTTPStatus.UNPROCESSABLE_ENTITY)
+        self._send_json({**result, "error": result["error"]["message"], "error_type": result["error"]["type"]},
+                        status)
 
     # ------------------------------------------------------------ helpers
     def _send(self, body: bytes, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -97,6 +118,9 @@ def main() -> None:
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"Pwn2Patch running at http://{args.host}:{args.port}  (Ctrl+C to stop)", flush=True)
+    ai = ai_status()
+    print(f"  AI patching: {'on, ' + ai['model'] if ai['enabled'] else 'off (set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN)'}",
+          flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
