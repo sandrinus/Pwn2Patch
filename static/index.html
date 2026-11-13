@@ -15,6 +15,8 @@
     --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, "Liberation Mono", monospace;
     --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     --radius: 10px;
+    --syn-kw: #7c3aed; --syn-str: #15803d; --syn-com: #6b7280; --syn-num: #b45309;
+    --syn-fn: #1d4ed8; --syn-bi: #0e7490; --syn-deco: #be185d;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
@@ -24,6 +26,8 @@
       --accent: #748ffc; --accent-text: #0f1115;
       --critical: #ff6b6b; --high: #ff922b; --medium: #fcc419; --low: #4dabf7; --info: #adb5bd;
       --pass: #51cf66; --fail: #ff6b6b; --good: #51cf66; --warn: #fcc419; --bad: #ff6b6b;
+      --syn-kw: #c4a7ff; --syn-str: #8fd19e; --syn-com: #7d8590; --syn-num: #f2b56b;
+      --syn-fn: #82aaff; --syn-bi: #6fd3e3; --syn-deco: #f38bb5;
       color-scheme: dark;
     }
   }
@@ -33,6 +37,8 @@
     --accent: #748ffc; --accent-text: #0f1115;
     --critical: #ff6b6b; --high: #ff922b; --medium: #fcc419; --low: #4dabf7; --info: #adb5bd;
     --pass: #51cf66; --fail: #ff6b6b; --good: #51cf66; --warn: #fcc419; --bad: #ff6b6b;
+    --syn-kw: #c4a7ff; --syn-str: #8fd19e; --syn-com: #7d8590; --syn-num: #f2b56b;
+    --syn-fn: #82aaff; --syn-bi: #6fd3e3; --syn-deco: #f38bb5;
     color-scheme: dark;
   }
 
@@ -240,6 +246,61 @@
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 10px; font-size: 13.5px; font-weight: 600; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 30; max-width: calc(100vw - 32px); }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+  /* syntax highlighting: a <pre> under a transparent textarea */
+  .hl { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #hl { margin: 0; padding: 12px 16px; font: inherit; white-space: pre; tab-size: 4; color: var(--text); will-change: transform; }
+  textarea#code.highlighted { color: transparent; caret-color: var(--text); }
+  textarea#code.highlighted::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); color: transparent; }
+  .tk-kw { color: var(--syn-kw); } .tk-str { color: var(--syn-str); } .tk-com { color: var(--syn-com); font-style: italic; }
+  .tk-num { color: var(--syn-num); } .tk-fn { color: var(--syn-fn); } .tk-bi { color: var(--syn-bi); } .tk-deco { color: var(--syn-deco); }
+
+  /* status bar: what's on the caret's line (keyboard-friendly hover card) */
+  .statusbar { display: flex; align-items: center; gap: 10px; padding: 5px 12px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); min-height: 36px; }
+  .statusbar .sev { width: auto; }
+  .sb-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .sb-hint { margin-left: auto; white-space: nowrap; }
+  kbd.k { font: 11px var(--mono); border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--muted); }
+
+  /* report tabs and grouping */
+  .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 18px 0 12px; }
+  .tab { background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; padding: 8px 12px; font-weight: 600; color: var(--muted); }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab b { color: var(--faint); margin-left: 4px; font-variant-numeric: tabular-nums; }
+  .findings-toolbar { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; margin-bottom: 10px; }
+  .findings-toolbar .chips { margin: 0; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex: none; }
+  .seg button { background: none; border: 0; padding: 3px 10px; font-size: 12.5px; color: var(--muted); }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
+  .group { border: 1px solid var(--border); border-left: 4px solid var(--sev-color); border-radius: 8px; }
+  .group > summary { list-style: none; display: flex; gap: 10px; align-items: baseline; padding: 9px 12px; cursor: pointer; color: var(--text); font-size: 14px; }
+  .group > summary::-webkit-details-marker { display: none; }
+  .group > summary::before { content: "▸"; color: var(--muted); width: 10px; }
+  .group[open] > summary::before { content: "▾"; }
+  .group-title { font-weight: 600; }
+  .group-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .group > .findings { padding: 0 8px 8px; }
+  .group .finding { border-left-width: 1px; }
+  .finding-title.compact { font-weight: 500; overflow-wrap: anywhere; }
+  .finding-body.compact { padding-left: 12px; }
+  .notice { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }
+
+  /* fix safety and suppression */
+  .fix-btn.risky { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, var(--border)); background: color-mix(in srgb, var(--warn) 10%, transparent); }
+  .risk-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--warn); }
+  .risk-banner { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 13px; background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+  .link-btn { background: none; border: 0; padding: 2px 4px; color: var(--muted); font-size: 12.5px; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .link-btn:hover { color: var(--accent); }
+  .finding.suppressed { opacity: 0.7; border-left-style: dashed; }
+  .pts.gain { color: var(--good); }
+  .line-link { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .secret-snippet { display: flex; gap: 6px; align-items: flex-start; }
+  .secret-snippet .snippet { flex: 1; min-width: 0; }
+  .evidence-tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; }
+  .applied-group { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 700; margin: 4px 0 4px; }
+  .risky-toggle { margin: 0 0 12px; color: var(--text); font-size: 13px; }
+
   @media (max-width: 980px) {
     main { grid-template-columns: 1fr; padding: 12px 16px 16px; }
     .editor-panel { height: 60vh; min-height: 360px; }
@@ -249,6 +310,7 @@
     .cwe-row { grid-template-columns: 8px 70px minmax(0, 1fr) auto 30px; gap: 8px; }
     .finding-body { padding-left: 12px; }
     .gutter { width: 44px; }
+    .sb-hint { display: none; }
     header .sub { display: none; }
   }
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -285,12 +347,14 @@
       <div class="gutter" aria-hidden="true"><div id="gutter-inner"></div></div>
       <div class="code-wrap">
         <div class="bands" aria-hidden="true"><div id="bands"></div></div>
+        <div class="hl" aria-hidden="true"><pre id="hl"></pre></div>
         <div class="squiggles" aria-hidden="true"><div id="squiggles"></div></div>
         <textarea id="code" spellcheck="false" wrap="off" autocomplete="off" autocapitalize="off"
                   aria-label="Python code to analyze" placeholder="Paste Python code here…"></textarea>
       </div>
       <div class="ruler" id="ruler" title="Overview: click a mark to jump to it"></div>
     </div>
+    <div class="statusbar" id="statusbar" aria-live="polite"></div>
   </section>
 
   <section class="panel results-panel" id="results-panel" aria-label="Analysis results">
@@ -337,6 +401,11 @@
 
   const codeEl = $("#code"), gutterInner = $("#gutter-inner"), bandsEl = $("#bands");
   const squigglesEl = $("#squiggles"), ruler = $("#ruler"), hovercard = $("#hovercard");
+  const hlEl = $("#hl"), statusbar = $("#statusbar");
+  // Above this size, syntax highlighting and live re-analysis switch off to keep typing responsive.
+  const LARGE_FILE_CHARS = 60_000;
+  // Comment that tells the analyzer to skip a rule on one line. Must match the backend's parser.
+  const SUPPRESS_RE = /#\s*pwn2patch:\s*ignore(?:\[([^\]]*)\])?/;
   const patchAllBtn = $("#patch-all-btn"), undoBtn = $("#undo-btn"), liveToggle = $("#live-toggle");
   const resultsEl = $("#results"), resultsPanel = $("#results-panel");
   const analyzeBtn = $("#analyze-btn"), exportBtn = $("#export-btn"), lineMeta = $("#line-meta");
@@ -428,11 +497,43 @@
     toast.timer = setTimeout(() => el.classList.remove("show"), 3200);
   }
 
+  // ------------------------------------------------------------ syntax highlighting
+  const KEYWORDS = new Set(("False None True and as assert async await break class continue def del elif else except " +
+    "finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case").split(" "));
+  const BUILTINS = new Set(("print len range open eval exec compile str int float bool bytes list dict set tuple type " +
+    "isinstance getattr setattr hasattr super object self cls input __name__ __import__ Exception BaseException " +
+    "ValueError KeyError TypeError OSError RuntimeError").split(" "));
+  // comment | string (prefixes, triple quotes, unterminated) | decorator | number | identifier
+  const TOKEN_RE = /(#[^\n]*)|([rRbBuUfF]{0,2}(?:"""[\s\S]*?(?:"""|$)|'''[\s\S]*?(?:'''|$)|"(?:\\.|[^"\\\n])*"?|'(?:\\.|[^'\\\n])*'?))|(@[\w.]+)|(\b\d[\w.]*)|([A-Za-z_]\w*)/g;
+
+  function highlight(text) {
+    let html = "", last = 0, prevWord = "";
+    for (const m of text.matchAll(TOKEN_RE)) {
+      html += escapeHtml(text.slice(last, m.index));
+      last = m.index + m[0].length;
+      const [tok, com, str, deco, num, word] = m;
+      let cls = com ? "com" : str ? "str" : deco ? "deco" : num ? "num" : null;
+      if (word) {
+        cls = KEYWORDS.has(word) ? "kw" : (prevWord === "def" || prevWord === "class") ? "fn" : BUILTINS.has(word) ? "bi" : null;
+        prevWord = word;
+      }
+      html += cls ? `<span class="tk-${cls}">${escapeHtml(tok)}</span>` : escapeHtml(tok);
+    }
+    return html + escapeHtml(text.slice(last)) + "\n ";   // trailing line keeps the last empty line's height
+  }
+
+  const isLarge = () => codeEl.value.length > LARGE_FILE_CHARS;
+  function renderHighlight() {
+    const on = !isLarge();
+    codeEl.classList.toggle("highlighted", on);
+    hlEl.innerHTML = on ? highlight(codeEl.value) : "";
+  }
+
   // ------------------------------------------------------------ editor
   let gutterKey = "";
   function renderEditorDecorations(force = false) {
     const count = codeEl.value.split("\n").length;
-    lineMeta.textContent = `${count} line${count === 1 ? "" : "s"}`;
+    lineMeta.textContent = `${count} line${count === 1 ? "" : "s"}` + (isLarge() ? " · large file: live off" : "");
     const marks = lineMarks();
     const key = `${count}|${isFresh()}|${activeLine}|${reportVersion}`;
     if (key !== gutterKey || force) {
@@ -478,19 +579,22 @@
     gutterInner.style.transform = `translateY(${y}px)`;
     bandsEl.style.transform = `translateY(${y}px)`;
     squigglesEl.style.transform = `translate(${-codeEl.scrollLeft}px, ${y}px)`;
+    hlEl.style.transform = `translate(${-codeEl.scrollLeft}px, ${y}px)`;
   }
 
-  function jumpToLine(line) {
+  // focus: false keeps keyboard focus where it is (j/k navigation from the report).
+  function jumpToLine(line, { focus = true } = {}) {
     const lines = codeEl.value.split("\n");
     let offset = 0;
     for (let i = 0; i < line - 1 && i < lines.length; i++) offset += lines[i].length + 1;
     activeLine = line;
-    codeEl.focus({ preventScroll: true });
+    if (focus) codeEl.focus({ preventScroll: true });
     codeEl.setSelectionRange(offset, offset);
     codeEl.scrollTop = Math.max(0, PAD + (line - 1) * LINE_H - codeEl.clientHeight / 3);
     codeEl.scrollLeft = 0;
     renderEditorDecorations();
     markActiveFindings(line, false);
+    renderStatus();
   }
 
   // keepHistory: a patch or undo of the same file, so the score badge and undo stack stay meaningful.
@@ -508,12 +612,46 @@
   }
 
   function onCodeChanged() {
+    if (activeLine && activeLine > codeEl.value.split("\n").length) activeLine = null;
     resultsPanel.classList.toggle("is-stale", !!report && !isFresh());
+    renderHighlight();
     renderEditorDecorations();
+    renderStatus();
     hideHovercard();
     clearTimeout(liveTimer);
-    if (liveToggle.checked && codeEl.value.trim() && !isFresh()) liveTimer = setTimeout(() => runAnalysis({ quiet: true }), 450);
+    if (liveToggle.checked && !isLarge() && codeEl.value.trim() && !isFresh()) {
+      liveTimer = setTimeout(() => runAnalysis({ quiet: true }), 450);
+    }
   }
+
+  // ---- status bar: findings on the caret's line, so keyboard users get what the hover card shows
+  const caretLine = () => codeEl.value.slice(0, codeEl.selectionStart).split("\n").length;
+  let statusFrame = 0;
+  function renderStatus() {
+    cancelAnimationFrame(statusFrame);
+    statusFrame = requestAnimationFrame(() => {
+      const line = document.activeElement === codeEl ? caretLine() : activeLine;
+      const found = line ? findingsOnLine(line) : [];
+      const hint = `<span class="sb-hint"><kbd class="k">F8</kbd> next issue · <kbd class="k">${isMac ? "⌘" : "Ctrl"}+.</kbd> quick fix</span>`;
+      if (!found.length) {
+        statusbar.innerHTML = `<span>${line ? `Ln ${line}` : ""}</span>${hint}`;
+        return;
+      }
+      const f = found[0], i = findingIndex.get(f);
+      statusbar.innerHTML = `<span class="sev sev-${f.severity}">${f.severity}</span>
+        <span class="sb-msg" title="${escapeHtml(f.message.replace(/`/g, ""))}">${messageHtml(f.message)}${found.length > 1 ? ` <span class="meta">+${found.length - 1} more</span>` : ""}</span>
+        ${f.patch ? `<button class="fix-btn ${isRisky(f) ? "risky" : ""}" data-fix="${i}">Preview fix</button>` : ""}
+        <button class="link-btn" data-suppress="${i}">Suppress</button>`;
+    });
+  }
+  ["keyup", "click", "focus", "blur"].forEach(type => codeEl.addEventListener(type, renderStatus));
+  statusbar.addEventListener("click", e => {
+    const fix = e.target.closest("[data-fix]"), sup = e.target.closest("[data-suppress]");
+    if (fix) previewFix(report.findings[Number(fix.dataset.fix)]);
+    const link = e.target.closest(".line-link");
+    if (link) { jumpToLine(Number(link.dataset.goto)); markActiveFindings(Number(link.dataset.goto), true); }
+    if (sup) suppress(report.findings[Number(sup.dataset.suppress)]);
+  });
 
   codeEl.addEventListener("input", onCodeChanged);
   codeEl.addEventListener("scroll", () => { syncScroll(); hideHovercard(); });
@@ -537,9 +675,10 @@
       hovercard.innerHTML = found.map(f => `
         <div class="hc-item sev-${f.severity}">
           <span class="sev">${f.severity}</span><b>${escapeHtml(f.title)}</b>
-          <p>${richText(f.message)}</p>
-          ${f.fix ? `<button class="fix-btn" data-fix="${report.findings.indexOf(f)}">Preview fix</button>`
-                  : aiButton(f) || `<span class="manual">No auto-patch: see the report</span>`}
+          <p>${messageHtml(f.message)}</p>
+          ${f.patch ? `<button class="fix-btn ${isRisky(f) ? "risky" : ""}" data-fix="${findingIndex.get(f)}">${isRisky(f) ? "⚠ " : ""}Preview fix</button>`
+                    : aiButton(f) || `<span class="manual">No auto-patch</span>`}
+          <button class="link-btn" data-suppress="${findingIndex.get(f)}">Suppress</button>
         </div>`).join("");
       hovercard.classList.add("show");
     }
@@ -551,10 +690,13 @@
   codeEl.addEventListener("mouseleave", () => { hideTimer = setTimeout(() => { if (!hovercard.matches(":hover")) hideHovercard(); }, 200); });
   hovercard.addEventListener("mouseleave", hideHovercard);
   hovercard.addEventListener("click", e => {
-    const btn = e.target.closest("[data-fix]");
+    const btn = e.target.closest("[data-fix]"), sup = e.target.closest("[data-suppress]");
     if (btn) { hideHovercard(); previewFix(report.findings[Number(btn.dataset.fix)]); }
     const ai = e.target.closest("[data-ai]");
     if (ai) askAI(report.findings[Number(ai.dataset.ai)], ai);
+    const link = e.target.closest(".line-link");
+    if (link) { hideHovercard(); jumpToLine(Number(link.dataset.goto)); markActiveFindings(Number(link.dataset.goto), true); }
+    if (sup) { hideHovercard(); suppress(report.findings[Number(sup.dataset.suppress)]); }
   });
 
   ruler.addEventListener("click", e => {
@@ -574,8 +716,38 @@
     }
   });
   document.addEventListener("keydown", e => {
-    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); runAnalysis(); }
+    const mod = e.ctrlKey || e.metaKey;
+    const typing = e.target.closest?.("textarea, input, select, [contenteditable]");
+    if (e.key === "Enter" && mod) { e.preventDefault(); runAnalysis(); }
+    else if (e.key === "F8") { e.preventDefault(); navigateFinding(e.shiftKey ? -1 : 1, { focus: !!typing }); }
+    else if (e.key === "." && mod) { e.preventDefault(); quickFix(); }
+    else if (!typing && !mod && !e.altKey && !document.querySelector("dialog[open]") && (e.key === "j" || e.key === "k")) {
+      e.preventDefault();
+      navigateFinding(e.key === "j" ? 1 : -1, { focus: false });
+    }
   });
+
+  // Next / previous finding (by line) among the ones the current filters show.
+  function navigateFinding(dir, { focus }) {
+    if (!isFresh() || !report.ok) return;
+    const lines = [...new Set(filteredFindings().map(f => f.line))].sort((a, b) => a - b);
+    if (!lines.length) return;
+    const from = activeLine ?? (document.activeElement === codeEl ? caretLine() : 0);
+    const next = dir > 0 ? (lines.find(l => l > from) ?? lines[0])
+                         : ([...lines].reverse().find(l => l < from) ?? lines[lines.length - 1]);
+    if (view !== "findings") setView("findings");
+    jumpToLine(next, { focus });
+    markActiveFindings(next, true);
+  }
+
+  // Ctrl/⌘+. previews the patch for the caret's line (or the selected finding's line).
+  function quickFix() {
+    const line = document.activeElement === codeEl ? caretLine() : activeLine;
+    const here = line ? findingsOnLine(line) : [];
+    const f = here.find(x => x.patch);
+    if (f) previewFix(f);
+    else toast(here.length ? "No automatic patch for this line" : "No finding on this line");
+  }
   gutterInner.addEventListener("click", e => {
     const ln = e.target.closest(".ln.mark");
     if (!ln) return;
@@ -592,6 +764,13 @@
     return data;
   }
 
+  // Share of non-blank lines in `b` that also appear in `a`.
+  function sharedLineRatio(a, b) {
+    const old = new Set(a.split("\n").map(l => l.trim()).filter(Boolean));
+    const lines = b.split("\n").map(l => l.trim()).filter(Boolean);
+    return lines.length ? lines.filter(l => old.has(l)).length / lines.length : 1;
+  }
+
   // quiet: a live re-run while typing; it shouldn't move the cursor or flash the button.
   async function runAnalysis({ quiet = false } = {}) {
     clearTimeout(liveTimer);
@@ -601,14 +780,20 @@
     try {
       const data = await postJson("/api/analyze", { code });
       if (seq !== requestSeq) return null;           // a newer run is on its way
-      if (newFile) { previous = null; newFile = false; }
-      else if (report?.ok && analyzedCode !== code) previous = { report, code: analyzedCode };
+      // A paste that replaces most of the file is a different file: don't show "46 fixed" for it.
+      if (newFile || (analyzedCode !== null && sharedLineRatio(analyzedCode, code) < 0.3)) {
+        previous = null;
+        newFile = false;
+        if (!quiet || activeLine > code.split("\n").length) activeLine = null;
+      } else if (report?.ok && analyzedCode !== code) previous = { report, code: analyzedCode };
       report = data;
       analyzedCode = code;
       reportVersion++;
+      findingIndex = new Map((data.ok ? data.findings : []).map((f, i) => [f, i]));
       if (!quiet) activeLine = null;
       renderResults();
       renderEditorDecorations(true);
+      renderStatus();
       resultsPanel.classList.remove("is-stale");
       if (!quiet && !data.ok && data.error?.line) jumpToLine(data.error.line);
       return data;
@@ -635,11 +820,49 @@
       const d = (after.get(rule) || 0) - (before.get(rule) || 0);
       if (d > 0) added += d; else fixed -= d;
     }
-    return { delta: report.score - previous.report.score, from: previous.report.score, fixed, added,
+    // Findings that disappeared because they were suppressed weren't fixed.
+    const suppressed = Math.max(0, (report.suppressed?.length || 0) - (previous.report.suppressed?.length || 0));
+    fixed = Math.max(0, fixed - suppressed);
+    return { delta: report.score - previous.report.score, from: previous.report.score, fixed, added, suppressed,
              gateFlipped: previous.report.gate.status === "FAIL" && report.gate.status === "PASS" };
   }
 
   // ------------------------------------------------------------ results
+  // Fields read here that the backend may not send yet (all optional, see README "Frontend contract"):
+  //   finding.patch.safety          "safe" | "behavior_change"
+  //   finding.points.gain_if_fixed  overall points recovered by fixing just this finding
+  //   report.suppressed             findings hidden by a `# pwn2patch: ignore[...]` comment
+  //   report.patches_truncated      true when only some findings got a patch prepared
+  let view = ["findings", "overview", "cwe"].includes(storage.get("p2p-view")) ? storage.get("p2p-view") : "findings";
+  let groupBy = ["severity", "rule", "line"].includes(storage.get("p2p-group")) ? storage.get("p2p-group") : "severity";
+  let showSuppressed = false;
+  let findingIndex = new Map();   // finding object -> its index in report.findings
+
+  const cap = s => s[0].toUpperCase() + s.slice(1);
+
+  // Messages can point at another line ("built with string formatting on line 19"): make that a link.
+  const messageHtml = s => richText(s).replace(/\bon line (\d+)\b/g,
+    (_, n) => `on <button class="line-link" data-goto="${n}" title="Show line ${n}">line ${n}</button>`);
+
+  // Secret findings quote the secret. Mask string literals so screenshots, demos and exports don't leak it.
+  const SECRET_RULES = new Set(["SEC004", "SEC009"]);
+  const isSecret = f => SECRET_RULES.has(f?.rule_id);
+  const maskValue = v => v.length <= 12 ? v.slice(0, 2) + "•••" : v.slice(0, 4) + "•••" + v.slice(-2);
+  const maskSecrets = text => String(text ?? "").replace(/(["'])((?:\\.|(?!\1).)*)\1/g,
+    (m, q, inner) => inner.length >= 6 ? q + maskValue(inner) + q : m);
+  const secretLines = () => new Set(report?.ok ? report.findings.filter(isSecret).map(f => f.line) : []);
+
+  // What to do when there's no automatic patch, for rules where the generic text isn't helpful.
+  const MANUAL_HINT = {
+    SEC004: "No safe auto-patch: move it to the environment by hand, then rotate it",
+    SEC009: "Credential? Move it to the environment and rotate it. Hash or ID? Suppress it",
+  };
+  // Which signal found a secret (optional backend field): name, value, usage or entropy.
+  const EVIDENCE = { name: "found by name", value: "found by value", usage: "found by usage", entropy: "random-looking" };
+  const isRisky = f => f?.patch?.safety === "behavior_change";
+  const hasSafetyInfo = () => !!report?.ok && report.findings.some(f => f.patch?.safety);
+  const suppressedList = () => (report?.ok && Array.isArray(report.suppressed)) ? report.suppressed : [];
+
   function renderEmpty() {
     exportBtn.hidden = patchAllBtn.hidden = true;
     resultsEl.innerHTML = `<div class="empty"><div>
@@ -654,16 +877,24 @@
     if (!c) return "";
     const cls = c.delta > 0 ? "up" : c.delta < 0 ? "down" : "same";
     const arrow = c.delta > 0 ? "▲" : c.delta < 0 ? "▼" : "•";
-    const parts = [c.fixed && `${c.fixed} fixed`, c.added && `${c.added} new`].filter(Boolean).join(" · ");
+    const parts = [c.fixed && `${c.fixed} fixed`, c.suppressed && `${c.suppressed} suppressed`, c.added && `${c.added} new`]
+      .filter(Boolean).join(" · ");
     return `<div class="delta-detail"><span class="delta ${cls}">${arrow} ${c.delta > 0 ? "+" : ""}${c.delta}</span>
       from ${c.from}${parts ? ` · ${parts}` : ""}</div>`;
+  }
+
+  function updatePatchAllButton() {
+    patchAllBtn.hidden = !report?.ok || !report.fixable;
+    if (patchAllBtn.hidden) return;
+    const safe = report.findings.filter(f => f.patch && !isRisky(f)).length;
+    patchAllBtn.textContent = hasSafetyInfo() && safe ? `Patch safe (${safe})` : `Patch all (${report.fixable})`;
+    patchAllBtn.title = hasSafetyInfo() ? "Apply every patch that doesn't change behavior; review the rest" : "";
   }
 
   function renderResults() {
     if (!report) return renderEmpty();
     exportBtn.hidden = false;
-    patchAllBtn.hidden = !report.ok || !report.fixable;
-    if (report.ok) patchAllBtn.textContent = `Patch all (${report.fixable})`;
+    updatePatchAllButton();
     const stale = `<div class="stale-banner">The code changed since this report. Press <b>Analyze</b> to update it.</div>`;
 
     if (!report.ok) {
@@ -677,24 +908,17 @@
       return;
     }
 
-    const r = report;
-    const s = r.stats;
+    const r = report, s = r.stats;
     const color = gradeColor(r.score);
     const reasons = r.gate.reasons.length
       ? `<ul class="reasons">${r.gate.reasons.map(x => `<li>${escapeHtml(x)}</li>`).join("")}</ul>`
       : `<p class="reasons" style="padding:0">Meets every requirement of the policy.</p>`;
+    const suppressedNote = suppressedList().length ? ` · ${suppressedList().length} suppressed` : "";
+    const tabs = [["findings", "Findings", r.findings.length], ["overview", "Categories", null],
+                  ["cwe", "Weaknesses", r.cwe_summary.length]];
 
-    const cats = Object.entries(r.categories).map(([name, c]) => `
-      <button class="cat ${filters.category === name ? "active" : ""}" data-cat="${name}" title="Show only ${name} findings">
-        <span class="cat-name">${name}</span>
-        <span class="bar" style="--bar-color:${gradeColor(c.score)}"><span data-width="${c.score}"></span></span>
-        <span class="cat-score">${c.score}</span>
-        <span class="cat-count">${c.findings} issue${c.findings === 1 ? "" : "s"}</span>
-      </button>`).join("");
-
-    const change = changeSummary();
     resultsEl.innerHTML = stale + `<div class="report">
-      <div class="summary ${change?.gateFlipped ? "celebrate" : ""}" style="--ring-color:${color}">
+      <div class="summary ${changeSummary()?.gateFlipped ? "celebrate" : ""}" style="--ring-color:${color}">
         <div class="ring" role="img" aria-label="Score ${r.score} out of 100">
           <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="50"/>
             <circle class="value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="0 100"/></svg>
@@ -704,21 +928,56 @@
           <div class="grade-line"><span class="grade">Grade ${r.grade}</span><span class="gate ${r.gate.status}">${r.gate.status === "PASS" ? "✓ PASS" : "✕ FAIL"}</span></div>
           ${reasons}
           ${renderDelta()}
-          <div class="stats">${plural(s.lines, "line")} · ${plural(s.functions, "function")} · ${plural(s.classes, "class", "classes")} · ${plural(r.findings.length, "finding")}</div>
+          <div class="stats">${plural(s.lines, "line")} · ${plural(s.functions, "function")} · ${plural(s.classes, "class", "classes")} · ${plural(r.findings.length, "finding")}${suppressedNote}</div>
         </div>
       </div>
-      <div class="section-title">Categories</div>
-      <div class="cats">${cats}</div>
-      ${renderCweSection(r)}
-      <div class="section-title" id="findings-title">Findings</div>
-      <div id="findings-area"></div>
+      <div class="tabs" role="tablist" aria-label="Report sections">${tabs.map(([id, label, n]) =>
+        `<button class="tab" role="tab" id="tab-${id}" data-view="${id}">${label}${n === null ? "" : `<b>${n}</b>`}</button>`).join("")}</div>
+      <div id="tab-panel" role="tabpanel"></div>
     </div>`;
 
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      resultsEl.querySelector(".ring .value")?.setAttribute("stroke-dasharray", `${r.score} 100`);
-      resultsEl.querySelectorAll(".bar > span").forEach(el => { el.style.width = el.dataset.width + "%"; });
-    }));
-    renderFindings();
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      resultsEl.querySelector(".ring .value")?.setAttribute("stroke-dasharray", `${r.score} 100`)));
+    renderTab();
+  }
+
+  function setView(next) {
+    view = next;
+    storage.set("p2p-view", next);
+    renderTab();
+  }
+
+  function renderTab() {
+    const panel = $("#tab-panel");
+    if (!panel || !report?.ok) return;
+    resultsEl.querySelectorAll(".tab").forEach(t => {
+      const on = t.dataset.view === view;
+      t.classList.toggle("active", on);
+      t.setAttribute("aria-selected", on);
+      t.tabIndex = on ? 0 : -1;
+    });
+    panel.setAttribute("aria-labelledby", `tab-${view}`);
+    if (view === "overview") {
+      panel.innerHTML = renderCategories(report);
+      requestAnimationFrame(() => requestAnimationFrame(() =>
+        panel.querySelectorAll(".bar > span").forEach(el => { el.style.width = el.dataset.width + "%"; })));
+    } else if (view === "cwe") {
+      panel.innerHTML = renderCweSection(report) || `<div class="none">None of the findings map to a CWE.</div>`;
+    } else {
+      panel.innerHTML = `<div id="findings-area"></div>`;
+      renderFindings();
+    }
+  }
+
+  function renderCategories(r) {
+    return `<p class="cwe-note">Click a category to see its findings.</p><div class="cats">${
+      Object.entries(r.categories).map(([name, c]) => `
+      <button class="cat ${filters.category === name ? "active" : ""}" data-cat="${name}" title="Show only ${name} findings">
+        <span class="cat-name">${name}</span>
+        <span class="bar" style="--bar-color:${gradeColor(c.score)}"><span data-width="${c.score}"></span></span>
+        <span class="cat-score">${c.score}</span>
+        <span class="cat-count">${c.findings} issue${c.findings === 1 ? "" : "s"}</span>
+      </button>`).join("")}</div>`;
   }
 
   function renderCweSection(r) {
@@ -734,83 +993,142 @@
         <span class="cwe-count">×${c.count}</span>
       </button>`).join("");
     return `
-      <div class="section-title">Weaknesses (CWE)</div>
       <p class="cwe-note">${plural(r.cwe_summary.length, "distinct CWE")} across ${r.cwe_coverage.mapped} of
-        ${plural(r.cwe_coverage.total, "finding")}${qualityCount ? `; ${qualityCount} tagged <span class="quality-tag">quality</span> are code-quality weaknesses, not vulnerabilities` : ""}. Click one to filter.</p>
+        ${plural(r.cwe_coverage.total, "finding")}${qualityCount ? `; ${qualityCount} tagged <span class="quality-tag">quality</span> are code-quality weaknesses, not vulnerabilities` : ""}. Click one to see its findings.</p>
       <div class="cwe-list">${rows}</div>`;
   }
 
   function cweTags(f) {
-    if (!f.cwe.length) return "";
+    if (!f.cwe?.length) return "";
     return `<div class="cwe-tags">${f.cwe.map(c => `
       <a class="cwe-pill sev-${f.severity} ${c.quality_only ? "quality" : ""}" href="${escapeHtml(c.url)}" target="_blank"
          rel="noopener" title="${escapeHtml(`${c.id}: ${c.name}`)}"><b>${c.id}</b>${escapeHtml(c.short)}</a>`).join("")}</div>`;
   }
 
+  // Category and CWE filters (not severity), shared by the list and keyboard navigation.
+  const matchesScope = f => (!filters.category || f.category === filters.category) &&
+                            (!filters.cwe || f.cwe?.[0]?.id === filters.cwe);
+  function filteredFindings() {
+    if (!report?.ok) return [];
+    return report.findings.filter(f => matchesScope(f) && (!filters.fixable || f.patch) &&
+                                       (!filters.severity || f.severity === filters.severity));
+  }
+
   function renderFindings() {
     const area = $("#findings-area");
     if (!area || !report?.ok) return;
-    const inCategory = report.findings.filter(f =>
-      (!filters.category || f.category === filters.category) && (!filters.cwe || f.cwe[0]?.id === filters.cwe) &&
-      (!filters.fixable || f.fix));
-    const fixableCount = report.findings.filter(f =>
-      (!filters.category || f.category === filters.category) && (!filters.cwe || f.cwe[0]?.id === filters.cwe) && f.fix).length;
-    const counts = Object.fromEntries(SEVERITIES.map(sv => [sv, inCategory.filter(f => f.severity === sv).length]));
-    const shown = inCategory.filter(f => !filters.severity || f.severity === filters.severity);
+    const scoped = report.findings.filter(f => matchesScope(f) && (!filters.fixable || f.patch));
+    const counts = Object.fromEntries(SEVERITIES.map(sv => [sv, scoped.filter(f => f.severity === sv).length]));
+    const fixableCount = report.findings.filter(f => matchesScope(f) && f.patch).length;
+    const shown = filteredFindings();
+    const suppressed = suppressedList();
 
     const active = [filters.cwe && ["cwe", filters.cwe], filters.category && ["category", filters.category]].filter(Boolean);
-    const clearChips = active.map(([key, label]) =>
-      `<button class="chip active" data-clear="${key}" title="Clear this filter">${escapeHtml(label)} ✕</button>`);
-    const chips = clearChips.concat([`<button class="chip ${filters.severity ? "" : "active"}" data-sev="">All <b>${inCategory.length}</b></button>`])
-      .concat(SEVERITIES.filter(sv => counts[sv]).map(sv =>
+    const chips = [
+      ...active.map(([key, label]) =>
+        `<button class="chip active" data-clear="${key}" title="Clear this filter">${escapeHtml(label)} ✕</button>`),
+      `<button class="chip ${filters.severity || showSuppressed ? "" : "active"}" data-sev="">All <b>${scoped.length}</b></button>`,
+      ...SEVERITIES.filter(sv => counts[sv]).map(sv =>
         `<button class="chip sev-${sv} ${filters.severity === sv ? "active" : ""}" data-sev="${sv}">
-          <span class="dot"></span>${sv[0].toUpperCase() + sv.slice(1)} <b>${counts[sv]}</b></button>`))
-      .concat(fixableCount ? [`<button class="chip ${filters.fixable ? "active" : ""}" data-fixable title="Only findings with an automatic patch">
-          🔧 Fixable <b>${fixableCount}</b></button>`] : []).join("");
+          <span class="dot"></span>${cap(sv)} <b>${counts[sv]}</b></button>`),
+      fixableCount ? `<button class="chip ${filters.fixable ? "active" : ""}" data-fixable title="Only findings with an automatic patch">
+          🔧 Fixable <b>${fixableCount}</b></button>` : "",
+      suppressed.length ? `<button class="chip ${showSuppressed ? "active" : ""}" data-show-suppressed title="Findings hidden by an ignore comment">
+          Suppressed <b>${suppressed.length}</b></button>` : "",
+    ].join("");
+    const seg = `<div class="seg" role="group" aria-label="Group findings by">${["severity", "rule", "line"].map(g =>
+      `<button class="${groupBy === g ? "active" : ""}" data-group="${g}" aria-pressed="${groupBy === g}">${cap(g)}</button>`).join("")}</div>`;
+    const notice = report.patches_truncated
+      ? `<p class="notice">This file is large, so patches were prepared for the first findings only. Patch some, and the rest will follow.</p>` : "";
 
     let list;
-    if (!report.findings.length) {
+    if (showSuppressed) {
+      list = suppressed.map((f, i) => findingCard(f, { suppressedIndex: i })).join("") ||
+             `<div class="none">Nothing is suppressed.</div>`;
+    } else if (!report.findings.length) {
       list = `<div class="none">No findings. This code meets every rule in the policy.</div>`;
     } else if (!shown.length) {
       list = `<div class="none">No findings match this filter.</div>`;
+    } else if (groupBy === "rule") {
+      const groups = new Map();
+      for (const f of shown) groups.set(f.rule_id, [...(groups.get(f.rule_id) || []), f]);
+      list = [...groups.values()].map(items => {
+        const f = items[0];
+        const open = items.length <= 2 || ["critical", "high"].includes(f.severity) || items.some(x => x.line === activeLine);
+        return `<details class="group sev-${f.severity}" ${open ? "open" : ""}>
+          <summary><span class="sev">${f.severity}</span><span class="group-title">${escapeHtml(f.title)}</span>
+            <span class="rule-id">${f.rule_id}</span><span class="group-count">×${items.length}</span></summary>
+          <div class="findings">${items.map(x => findingCard(x, { compact: true })).join("")}</div>
+        </details>`;
+      }).join("");
     } else {
-      list = shown.map((f, i) => `
-        <article class="finding sev-${f.severity} ${f.line === activeLine ? "is-active" : ""}" data-line="${f.line}">
-          <button class="finding-head" data-goto="${f.line}" title="Show line ${f.line} in the editor">
-            <span class="sev">${f.severity}</span>
-            <span class="finding-title">${escapeHtml(f.title)}<span class="rule-id">${f.rule_id}</span></span>
-            ${pointsTag(f)}
-            <span class="loc">line ${f.line}</span>
-          </button>
-          <div class="finding-body">
-            <p class="msg">${richText(f.message)}</p>
-            <div class="finding-actions">
-              ${f.fix ? `<button class="fix-btn" data-fix="${report.findings.indexOf(f)}">🔧 Preview fix</button>`
-                      : `<span class="manual">${f.category === "security" ? "No safe auto-patch: needs a human" : "Manual fix"}</span>${aiButton(f)}`}
-            </div>
-            ${cweTags(f)}
-            ${f.snippet ? `<code class="snippet">${escapeHtml(f.snippet)}</code>` : ""}
-            <details ${i === 0 && ["critical", "high"].includes(f.severity) ? "open" : ""}>
-              <summary>Why it matters &amp; how to fix</summary>
-              <p><b>Why:</b> ${richText(f.why)}</p>
-              <p><b>Fix:</b> ${richText(f.fix)}</p>
-              ${f.cwe.map(c => `<p><b>${c.id}:</b> ${escapeHtml(c.name)}
-                ${c.quality_only ? `<span class="quality-tag" title="${escapeHtml(QUALITY_HINT)}">quality</span>` : ""}</p>`).join("")}
-              ${f.ref ? `<p>${refLink(f.ref)}</p>` : ""}
-            </details>
-          </div>
-        </article>`).join("");
+      const ordered = groupBy === "line" ? [...shown].sort((a, b) => a.line - b.line || (a.col || 0) - (b.col || 0)) : shown;
+      list = ordered.map((f, i) => findingCard(f, { open: i === 0 && groupBy === "severity" })).join("");
     }
-    area.innerHTML = `<div class="chips">${chips}</div><div class="findings">${list}</div>`;
+    area.innerHTML = `<div class="findings-toolbar"><div class="chips">${chips}</div>${seg}</div>${notice}<div class="findings">${list}</div>`;
   }
 
+  // compact: inside a rule group, whose header already shows the severity and title.
+  function findingCard(f, { open = false, suppressedIndex = null, compact = false } = {}) {
+    const i = findingIndex.get(f);
+    const isSuppressed = suppressedIndex !== null;
+    const actions = isSuppressed
+      ? `<button class="link-btn" data-unsuppress="${suppressedIndex}">Unsuppress</button>`
+      : `${f.patch
+          ? `<button class="fix-btn ${isRisky(f) ? "risky" : ""}" data-fix="${i}">${isRisky(f) ? "⚠" : "🔧"} Preview fix</button>
+             ${isRisky(f) ? `<span class="risk-tag" title="Applying this patch changes how the code behaves">changes behavior</span>` : ""}`
+          : `<span class="manual">${MANUAL_HINT[f.rule_id] || (f.category === "security" ? "No safe auto-patch: needs a human" : "Manual fix")}</span>${aiButton(f)}`}
+         ${EVIDENCE[f.evidence] ? `<span class="evidence-tag">${EVIDENCE[f.evidence]}</span>` : ""}
+         <button class="link-btn" data-suppress="${i}" title="Add a # pwn2patch: ignore[${f.rule_id}] comment to line ${f.line}">Suppress</button>`;
+    return `
+      <article class="finding sev-${f.severity} ${isSuppressed ? "suppressed" : ""} ${f.line === activeLine ? "is-active" : ""}" data-line="${f.line}">
+        <button class="finding-head" data-goto="${f.line}" title="Show line ${f.line} in the editor">
+          ${compact ? `<span class="finding-title compact">${richText(f.message)}</span>`
+                    : `<span class="sev">${f.severity}</span>
+          <span class="finding-title">${escapeHtml(f.title)}<span class="rule-id">${f.rule_id}</span></span>`}
+          ${isSuppressed ? "" : pointsTag(f)}
+          <span class="loc">line ${f.line}</span>
+        </button>
+        <div class="finding-body ${compact ? "compact" : ""}">
+          ${compact ? "" : `<p class="msg">${messageHtml(f.message)}</p>`}
+          <div class="finding-actions">${actions}</div>
+          ${cweTags(f)}
+          ${snippetHtml(f, suppressedIndex)}
+          ${f.why || f.fix ? `<details ${open && ["critical", "high"].includes(f.severity) ? "open" : ""}>
+            <summary>Why it matters &amp; how to fix</summary>
+            ${f.why ? `<p><b>Why:</b> ${richText(f.why)}</p>` : ""}
+            ${typeof f.fix === "string" ? `<p><b>Fix:</b> ${richText(f.fix)}</p>` : ""}
+            ${(f.cwe || []).map(c => `<p><b>${c.id}:</b> ${escapeHtml(c.name)}
+              ${c.quality_only ? `<span class="quality-tag" title="${escapeHtml(QUALITY_HINT)}">quality</span>` : ""}</p>`).join("")}
+            ${f.ref ? `<p>${refLink(f.ref)}</p>` : ""}
+          </details>` : ""}
+        </div>
+      </article>`;
+  }
+
+  function snippetHtml(f, suppressedIndex = null) {
+    if (!f.snippet) return "";
+    if (!isSecret(f)) return `<code class="snippet">${escapeHtml(f.snippet)}</code>`;
+    const ref = suppressedIndex !== null ? `s${suppressedIndex}` : findingIndex.get(f);
+    return `<div class="secret-snippet"><code class="snippet">${escapeHtml(maskSecrets(f.snippet))}</code>
+      <button class="link-btn" data-reveal="${ref}" title="Show the full value">Show</button></div>`;
+  }
+
+  // What fixing this finding is worth. Prefers the server's gain_if_fixed (correct under any
+  // scoring model); falls back to the raw penalty for older backends.
   function pointsTag(f) {
     const p = f.points;
     if (!p) return "";
     if (!p.counted) return `<span class="pts uncounted" title="Only the first ${perRuleCap} findings of each rule lower the score">not scored</span>`;
-    const clamped = p.category_clamped
-      ? ` ${f.category[0].toUpperCase() + f.category.slice(1)} is already at 0, so fixing this alone won't move the score yet.` : "";
-    return `<span class="pts" title="Costs ${p.category} points in ${f.category}.${clamped}">−${p.category}</span>`;
+    if (typeof p.gain_if_fixed === "number") {
+      if (p.gain_if_fixed > 0) {
+        return `<span class="pts gain" title="Fixing this raises the overall score by about ${p.gain_if_fixed}">+${p.gain_if_fixed}</span>`;
+      }
+      const why = p.category_clamped ? `${cap(f.category)} is already at 0, so fixing this alone won't raise the score yet.`
+                                     : "Fixing this alone doesn't change the score.";
+      return `<span class="pts uncounted" title="${why}">+0</span>`;
+    }
+    return `<span class="pts" title="Costs ${p.category} points in ${f.category}">−${p.category}</span>`;
   }
 
   function markActiveFindings(line, scroll) {
@@ -820,61 +1138,149 @@
       el.classList.toggle("is-active", on);
       if (on && !first) first = el;
     });
+    first?.closest("details.group")?.setAttribute("open", "");
     if (scroll && first) first.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }
 
   resultsEl.addEventListener("click", e => {
-    const fixBtn = e.target.closest("[data-fix]");
+    const t = e.target;
+    const fixBtn = t.closest("[data-fix]");
     if (fixBtn) return previewFix(report.findings[Number(fixBtn.dataset.fix)]);
-    const aiBtn = e.target.closest("[data-ai]");
+    const aiBtn = t.closest("[data-ai]");
     if (aiBtn) return askAI(report.findings[Number(aiBtn.dataset.ai)], aiBtn);
-    if (e.target.closest("[data-fixable]")) {
-      filters.fixable = !filters.fixable;
-      filters.severity = null;
+    const sup = t.closest("[data-suppress]");
+    if (sup) return suppress(report.findings[Number(sup.dataset.suppress)]);
+    const unsup = t.closest("[data-unsuppress]");
+    if (unsup) return unsuppress(suppressedList()[Number(unsup.dataset.unsuppress)]);
+    const reveal = t.closest("[data-reveal]");
+    if (reveal) {
+      const key = reveal.dataset.reveal;
+      const f = key.startsWith("s") ? suppressedList()[Number(key.slice(1))] : report.findings[Number(key)];
+      const code = reveal.previousElementSibling, shown = reveal.textContent === "Hide";
+      code.textContent = shown ? maskSecrets(f.snippet) : f.snippet;
+      reveal.textContent = shown ? "Show" : "Hide";
+      return;
+    }
+    const tab = t.closest("[data-view]");
+    if (tab) return setView(tab.dataset.view);
+    const group = t.closest("[data-group]");
+    if (group) {
+      groupBy = group.dataset.group;
+      storage.set("p2p-group", groupBy);
       return renderFindings();
     }
-    const goto = e.target.closest("[data-goto]");
-    if (goto) return jumpToLine(Number(goto.dataset.goto));
-    const cat = e.target.closest(".cat");
+    if (t.closest("[data-show-suppressed]")) { showSuppressed = !showSuppressed; return renderFindings(); }
+    if (t.closest("[data-fixable]")) {
+      filters.fixable = !filters.fixable;
+      filters.severity = null;
+      showSuppressed = false;
+      return renderFindings();
+    }
+    const goto = t.closest("[data-goto]");
+    if (goto) {
+      jumpToLine(Number(goto.dataset.goto));
+      if (goto.classList.contains("line-link")) markActiveFindings(Number(goto.dataset.goto), true);
+      return;
+    }
+    const cat = t.closest(".cat");
     if (cat) {
       filters.category = filters.category === cat.dataset.cat ? null : cat.dataset.cat;
       filters.severity = null;
-      resultsEl.querySelectorAll(".cat").forEach(el => el.classList.toggle("active", el.dataset.cat === filters.category));
-      return renderFindings();
+      return setView("findings");
     }
-    const cweRow = e.target.closest(".cwe-row");
+    const cweRow = t.closest(".cwe-row");
     if (cweRow) {
       filters.cwe = filters.cwe === cweRow.dataset.cwe ? null : cweRow.dataset.cwe;
       filters.severity = null;
-      resultsEl.querySelectorAll(".cwe-row").forEach(el => el.classList.toggle("active", el.dataset.cwe === filters.cwe));
-      renderFindings();
-      if (filters.cwe) $("#findings-title")?.scrollIntoView({ block: "start", behavior: "smooth" });
-      return;
+      return setView("findings");
     }
-    const clear = e.target.closest("[data-clear]");
-    if (clear) {
-      filters[clear.dataset.clear] = null;
-      resultsEl.querySelectorAll(clear.dataset.clear === "cwe" ? ".cwe-row" : ".cat")
-        .forEach(el => el.classList.remove("active"));
-      return renderFindings();
-    }
-    const chip = e.target.closest(".chip");
+    const clear = t.closest("[data-clear]");
+    if (clear) { filters[clear.dataset.clear] = null; return renderFindings(); }
+    const chip = t.closest(".chip");
     if (chip) {
       filters.severity = chip.dataset.sev || null;
+      showSuppressed = false;
       renderFindings();
     }
   });
 
+  // Arrow keys move between tabs (WAI-ARIA tabs pattern).
+  resultsEl.addEventListener("keydown", e => {
+    const tab = e.target.closest(".tab");
+    if (!tab || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
+    const tabs = [...resultsEl.querySelectorAll(".tab")];
+    const next = tabs[(tabs.indexOf(tab) + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+    setView(next.dataset.view);
+    $(`#tab-${next.dataset.view}`)?.focus();
+  });
+
+  // ---- suppression: add or remove a `# pwn2patch: ignore[RULE]` comment on the finding's line
+  function withSuppression(text, ruleId, add) {
+    const m = text.match(SUPPRESS_RE);
+    const rules = m?.[1] ? m[1].split(",").map(r => r.trim()).filter(Boolean) : [];
+    if (add) {
+      if (!m) return `${text.trimEnd()}  # pwn2patch: ignore[${ruleId}]`;
+      if (!m[1] || rules.includes(ruleId)) return text;     // a bare ignore already covers every rule
+      return text.replace(SUPPRESS_RE, `# pwn2patch: ignore[${[...rules, ruleId].join(", ")}]`);
+    }
+    if (!m) return text;
+    const left = rules.filter(r => r !== ruleId);
+    return left.length ? text.replace(SUPPRESS_RE, `# pwn2patch: ignore[${left.join(", ")}]`)
+                       : text.replace(/\s*#\s*pwn2patch:\s*ignore(?:\[[^\]]*\])?/, "");
+  }
+
+  function editLine(line, transform) {
+    const lines = codeEl.value.split("\n");
+    const text = lines[line - 1];
+    if (text === undefined) return null;
+    // Appending a comment inside an unfinished string or a continued line would break the code.
+    if (/"""|'''|\\$/.test(text)) return null;
+    const next = transform(text);
+    if (next === text) return null;
+    lines[line - 1] = next;
+    return lines.join("\n");
+  }
+
+  async function suppress(f) {
+    if (!f) return;
+    if (!isFresh()) return toast("The code changed. Re-analyze first.");
+    const code = editLine(f.line, text => withSuppression(text, f.rule_id, true));
+    if (code === null) return toast(`Can't add an ignore comment to line ${f.line}: add it by hand`);
+    const data = await applyCodeChange(code);
+    if (!data?.ok) return;
+    const still = data.findings.some(x => x.rule_id === f.rule_id && x.line === f.line);
+    toast(still && !Array.isArray(data.suppressed)
+      ? "Ignore comment added. The analyzer doesn't read suppressions yet, so the finding stays for now."
+      : `Suppressed ${f.rule_id} on line ${f.line} · Undo to bring it back`);
+  }
+
+  async function unsuppress(f) {
+    if (!f) return;
+    const code = editLine(f.line, text => withSuppression(text, f.rule_id, false));
+    if (code === null) return toast(`No ignore comment for ${f.rule_id} found on line ${f.line}`);
+    await applyCodeChange(code);
+    if (!suppressedList().length) showSuppressed = false;
+    renderFindings();
+    toast(`${f.rule_id} on line ${f.line} is reported again`);
+  }
+
   exportBtn.addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    // Secret values are masked in the export too: reports get attached and shared.
+    const maskFinding = f => isSecret(f) ? { ...f, snippet: maskSecrets(f.snippet) } : f;
+    const exported = report.ok ? { ...report, findings: report.findings.map(maskFinding),
+      ...(Array.isArray(report.suppressed) ? { suppressed: report.suppressed.map(maskFinding) } : {}) } : report;
+    const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
     const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "pwn2patch-report.json" });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
 
   // ------------------------------------------------------------ patches
+  // POST /api/fix accepts { code, include_behavior_changes } and may return `complete: false`
+  // and a `safety` per applied fix. Older backends ignore the flag and omit both fields.
   const diffDialog = $("#diff-dialog");
-  let pendingPatch = null;   // { code, label } to apply if the user confirms
+  let pendingPatch = null;      // { code, label } to apply if the user confirms
+  let includeRisky = false;     // Patch all: also apply fixes that change behavior
 
   function applyEdits(source, edits) {
     const lines = source.split("\n");
@@ -886,34 +1292,34 @@
   const diffLine = (cls, sign, no, text) =>
     `<div class="${cls}"><span class="ln-no">${no ?? ""}</span>${sign} ${escapeHtml(text)}</div>`;
 
-  // Render a fix's edits as hunks against the analyzed code, with 2 lines of context.
-  function editsToDiff(source, edits) {
+  // Render a patch's edits as hunks against the analyzed code, with 2 lines of context.
+  function editsToDiff(source, edits, masked = new Set()) {
     const lines = source.split("\n");
     return [...edits].sort((a, b) => a.start - b.start).map(e => {
       const from = Math.max(1, e.start - 2), to = Math.min(lines.length, Math.max(e.end, e.start - 1) + 2);
       let html = `<div class="hunk">line ${e.start}</div>`;
-      for (let n = from; n < e.start; n++) html += diffLine("", " ", n, lines[n - 1]);
-      for (let n = e.start; n <= e.end; n++) html += diffLine("del", "−", n, lines[n - 1]);
+      for (let n = from; n < e.start; n++) html += diffLine("", " ", n, masked.has(n) ? maskSecrets(lines[n - 1]) : lines[n - 1]);
+      for (let n = e.start; n <= e.end; n++) html += diffLine("del", "−", n, masked.has(n) ? maskSecrets(lines[n - 1]) : lines[n - 1]);
       for (const text of e.lines) html += diffLine("add", "+", "", text);
       for (let n = Math.max(e.end, e.start - 1) + 1; n <= to; n++) html += diffLine("", " ", n, lines[n - 1]);
       return html;
     }).join("");
   }
 
-  function unifiedToHtml(diff) {
+  function unifiedToHtml(diff, masked = new Set()) {
     let oldNo = 0;
     return diff.split("\n").filter(l => l && !l.startsWith("---") && !l.startsWith("+++")).map(l => {
       if (l.startsWith("@@")) { oldNo = Number(/-(\d+)/.exec(l)?.[1] || 1); return `<div class="hunk">line ${oldNo}</div>`; }
       if (l[0] === "+") return diffLine("add", "+", "", l.slice(1));
-      if (l[0] === "-") return diffLine("del", "−", oldNo++, l.slice(1));
-      return diffLine("", " ", oldNo++, l.slice(1));
+      const no = oldNo++, text = masked.has(no) ? maskSecrets(l.slice(1)) : l.slice(1);
+      return l[0] === "-" ? diffLine("del", "−", no, text) : diffLine("", " ", no, text);
     }).join("");
   }
 
   // ---- Workers AI: a drafted patch for findings with no mechanical fix, verified server-side
   function aiButton(f) {
-    if (!aiStatus.enabled || f.fix || !report) return "";
-    return `<button class="ai-btn" data-ai="${report.findings.indexOf(f)}"
+    if (!aiStatus.enabled || f.patch || !report) return "";
+    return `<button class="ai-btn" data-ai="${findingIndex.get(f)}"
       title="Ask ${escapeHtml(aiStatus.model)} on Cloudflare Workers AI for a patch. Pwn2Patch re-checks it before showing it.">✨ Ask Workers AI</button>`;
   }
 
@@ -929,7 +1335,7 @@
     try {
       const result = await postJson("/api/ai-fix", { code, rule_id: f.rule_id, line: f.line });
       if (code !== codeEl.value) return toast("The code changed while Workers AI was working. Ask again.");
-      previewFix({ ...f, fix: result.fix }, result);
+      previewFix({ ...f, patch: result.fix }, result);
     } catch (err) {
       toast(`Workers AI: ${err.message}`);
     } finally {
@@ -938,48 +1344,67 @@
     }
   }
 
+  function openDiffDialog() {
+    if (!diffDialog.open) diffDialog.showModal();
+    $("#apply-diff").focus();
+  }
+
   // ai: the /api/ai-fix result when the patch was drafted by Workers AI
   function previewFix(f, ai = null) {
-    if (!f?.fix || !isFresh()) return toast("The code changed. Re-analyze before patching.");
-    pendingPatch = { code: applyEdits(analyzedCode, f.fix.edits), label: ai ? "AI patch" : f.fix.title };
-    $("#diff-title").textContent = f.fix.title;
+    if (!f?.patch || !isFresh()) return toast("The code changed. Re-analyze before patching.");
+    pendingPatch = { code: applyEdits(analyzedCode, f.patch.edits), label: ai ? "AI patch" : f.patch.title };
+    $("#diff-title").textContent = f.patch.title;
     $("#diff-body").innerHTML = `
       <p class="score-preview">${ai ? `<span class="ai-badge" title="${escapeHtml(ai.model)}">✨ Workers AI</span>` : ""}
         <span class="sev sev-${f.severity}" style="width:auto">${f.severity}</span>
         ${escapeHtml(f.title)} · line ${f.line}</p>
-      ${f.fix.note ? `<p class="fix-note">${richText(f.fix.note)}</p>` : ""}
+      ${isRisky(f) ? `<p class="risk-banner"><b>⚠ This patch changes how the code behaves.</b>
+        Check the code that calls it before applying.</p>` : ""}
+      ${f.patch.note ? `<p class="fix-note">${richText(f.patch.note)}</p>` : ""}
       ${ai ? `<p class="fix-note">Drafted by <code>${escapeHtml(ai.model)}</code>${ai.attempts > 1 ? ` (${ai.attempts} tries)` : ""}.
-        Pwn2Patch re-analyzed the result: it parses, ${escapeHtml(f.rule_id)} is gone, and nothing critical or high was added.
+        Pwn2Patch re-analyzed the result: it parses, ${escapeHtml(f.rule_id)} is gone, and nothing critical, high or medium was added.
         Review it like any code from a stranger.</p>` : ""}
-      <div class="diff">${editsToDiff(analyzedCode, f.fix.edits)}</div>`;
+      <div class="diff">${editsToDiff(analyzedCode, f.patch.edits, secretLines())}</div>`;
     const gain = ai ? ai.score_after - ai.score_before : f.points?.gain_if_fixed ?? 0;
     $("#diff-meta").textContent = ai ? (gain > 0 ? `Score ${ai.score_before} → ${ai.score_after}` : "Verified, but doesn't change the score")
       : gain > 0 ? `Raises the overall score by about ${gain}`
-      : f.points?.category_clamped ? `${f.category[0].toUpperCase() + f.category.slice(1)} is already at 0: fix a few more to see the score move`
+      : f.points?.category_clamped ? `${cap(f.category)} is already at 0: fix a few more to see the score move`
       : "Doesn't change the score, but it's still worth fixing";
-    diffDialog.showModal();
-    $("#apply-diff").focus();
+    openDiffDialog();
+  }
+
+  function appliedListHtml(applied) {
+    const group = items => `<ul class="applied-list">${[...items.reduce((m, a) => m.set(a.title, (m.get(a.title) || 0) + 1), new Map())]
+      .map(([title, n]) => `<li>${richText(title)}${n > 1 ? ` <b>×${n}</b>` : ""}</li>`).join("")}</ul>`;
+    if (!applied.some(a => a.safety)) return group(applied);
+    const risky = applied.filter(a => a.safety === "behavior_change"), safe = applied.filter(a => a.safety !== "behavior_change");
+    return (safe.length ? `<div class="applied-group">Safe · ${safe.length}</div>${group(safe)}` : "") +
+           (risky.length ? `<div class="applied-group" style="color:var(--warn)">⚠ Changes behavior · ${risky.length}</div>${group(risky)}` : "");
   }
 
   async function previewPatchAll() {
     if (!isFresh()) return toast("The code changed. Re-analyze before patching.");
     patchAllBtn.disabled = true;
     try {
-      const result = await postJson("/api/fix", { code: analyzedCode });
+      const result = await postJson("/api/fix", { code: analyzedCode, include_behavior_changes: includeRisky });
       if (!result.ok) return toast(result.error?.message || "Could not patch this code.");
-      if (!result.applied.length) return toast("Nothing left to patch automatically.");
-      pendingPatch = { code: result.code, label: `${plural(result.applied.length, "patch", "patches")}` };
-      const left = report.findings.length - result.applied.length;
-      $("#diff-title").textContent = `Patch all: ${plural(result.applied.length, "fix", "fixes")}`;
+      const riskyAvailable = report.findings.filter(isRisky).length;
+      if (!result.applied.length && !riskyAvailable) return toast("Nothing left to patch automatically.");
+      pendingPatch = result.applied.length ? { code: result.code, label: plural(result.applied.length, "patch", "patches") } : null;
+      $("#diff-title").textContent = result.applied.length ? `Patch all: ${plural(result.applied.length, "fix", "fixes")}` : "Patch all";
       $("#diff-body").innerHTML = `
-        <p class="score-preview">Score <b>${result.score_before}</b> → <b style="color:${gradeColor(result.score_after)}">${result.score_after}</b>
-          <span class="meta">· fixes are applied one at a time and each result is re-checked</span></p>
-        <ul class="applied-list">${[...result.applied.reduce((m, a) => m.set(a.title, (m.get(a.title) || 0) + 1), new Map())]
-          .map(([title, n]) => `<li>${richText(title)}${n > 1 ? ` <b>×${n}</b>` : ""}</li>`).join("")}</ul>
-        <div class="diff">${unifiedToHtml(result.diff)}</div>`;
-      $("#diff-meta").textContent = left > 0 ? "Some findings will still need a human afterwards" : "";
-      diffDialog.showModal();
-      $("#apply-diff").focus();
+        ${hasSafetyInfo() && riskyAvailable ? `<label class="toggle risky-toggle"><input type="checkbox" id="include-risky" ${includeRisky ? "checked" : ""}>
+          Also apply ${plural(riskyAvailable, "fix", "fixes")} that change behavior</label>` : ""}
+        ${result.complete === false ? `<p class="notice">Stopped early because there were too many fixes for one run. Apply these, then press Patch all again for the rest.</p>` : ""}
+        ${result.applied.length ? `
+          <p class="score-preview">Score <b>${result.score_before}</b> → <b style="color:${gradeColor(result.score_after)}">${result.score_after}</b>
+            <span class="meta">· fixes are applied one at a time and each result is re-checked</span></p>
+          ${appliedListHtml(result.applied)}
+          <div class="diff">${unifiedToHtml(result.diff, secretLines())}</div>`
+        : `<p class="none">Every remaining patch changes behavior. Tick the box above to review them.</p>`}`;
+      $("#diff-meta").textContent = report.findings.length > result.applied.length ? "Some findings will still need a human afterwards" : "";
+      $("#apply-diff").disabled = !pendingPatch;
+      openDiffDialog();
     } catch (err) {
       toast(`Patch failed: ${err.message}`);
     } finally {
@@ -987,19 +1412,29 @@
     }
   }
   patchAllBtn.addEventListener("click", previewPatchAll);
+  $("#diff-body").addEventListener("change", e => {
+    if (e.target.id !== "include-risky") return;
+    includeRisky = e.target.checked;
+    previewPatchAll();
+  });
 
-  async function applyPendingPatch() {
-    if (!pendingPatch) return;
-    const { code, label } = pendingPatch;
-    pendingPatch = null;
-    diffDialog.close();
+  // Replace the editor's code as one undoable step and re-analyze. Returns the new report.
+  async function applyCodeChange(code) {
     undoStack.push(codeEl.value);
     undoBtn.hidden = false;
     const scrollTop = codeEl.scrollTop;
     setCode(code, { keepHistory: true });
     codeEl.scrollTop = scrollTop;
     syncScroll();
-    const data = await runAnalysis({ quiet: true });
+    return runAnalysis({ quiet: true });
+  }
+
+  async function applyPendingPatch() {
+    if (!pendingPatch) return;
+    const { code, label } = pendingPatch;
+    pendingPatch = null;
+    diffDialog.close();
+    const data = await applyCodeChange(code);
     const c = changeSummary();
     if (data?.ok && c) toast(`Applied ${label} · ${plural(c.fixed, "issue")} fixed · score ${c.from} → ${data.score}` +
                              (c.gateFlipped ? " · gate now PASSES 🎉" : ""));
@@ -1008,7 +1443,7 @@
   $("#cancel-diff").addEventListener("click", () => diffDialog.close());
   $("#close-diff").addEventListener("click", () => diffDialog.close());
   diffDialog.addEventListener("click", e => { if (e.target === diffDialog) diffDialog.close(); });
-  diffDialog.addEventListener("close", () => { pendingPatch = null; });
+  diffDialog.addEventListener("close", () => { pendingPatch = null; $("#apply-diff").disabled = false; });
 
   undoBtn.addEventListener("click", () => {
     if (!undoStack.length) return;

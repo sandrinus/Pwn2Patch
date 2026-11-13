@@ -124,7 +124,7 @@ def analyze(source: str, policy: dict | None = None) -> dict:
                 "gain_if_fixed": gain,
                 "category_clamped": cat_penalty >= 100,
             },
-            "fix": fix.to_dict() if fix else None,
+            "patch": fix.to_dict() if fix else None,   # automatic patch; "fix" is the advice text
         })
     findings_out.sort(key=lambda item: (severity_rank[item["severity"]], item["line"]))
 
@@ -137,7 +137,7 @@ def analyze(source: str, policy: dict | None = None) -> dict:
         **score_findings(findings, policy),
         "cwe_summary": cwe_summary(findings_out),
         "cwe_coverage": {"mapped": mapped, "total": len(findings_out)},
-        "fixable": sum(1 for f in findings_out if f["fix"]),
+        "fixable": sum(1 for f in findings_out if f["patch"]),
         "findings": findings_out,
     }
 

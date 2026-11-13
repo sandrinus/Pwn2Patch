@@ -2,4 +2,4 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-compliance-report.json
+pwn2patch-report.json

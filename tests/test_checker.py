@@ -68,6 +68,89 @@ class SecurityRuleTests(unittest.TestCase):
         self.assertNotIn("SEC007", rule_ids("hashlib.md5(b'x', usedforsecurity=False)"))
 
 
+# Fake values. The GitHub-shaped one is assembled at runtime so no key-shaped literal sits in the repo.
+FAKE_KEY = "FAKEk3yZq8vR2kLm9XyT4wPb7NcH3sJd6"   # random-looking, no provider format
+FAKE_GH = "gh" + "p_" + "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5"
+
+
+def secret_findings(code: str) -> list[tuple[str, int]]:
+    report = analyze(textwrap.dedent(code))
+    assert report["ok"], report
+    return [(f["rule_id"], f["line"]) for f in report["findings"] if f["rule_id"] in ("SEC004", "SEC009")]
+
+
+class RenamedSecretTests(unittest.TestCase):
+    """Renaming a variable must not hide the secret it holds."""
+
+    def test_renamed_key_used_in_a_header_is_still_a_secret(self):
+        code = f'cfg = "{FAKE_KEY}"\ndef f():\n    return requests.get(u, headers={{"X-API-Key": cfg}})'
+        self.assertEqual(secret_findings(code), [("SEC004", 1)])
+
+    def test_bearer_header_built_from_a_renamed_value(self):
+        self.assertEqual(secret_findings(f'v = "{FAKE_KEY}"\nh = {{"Authorization": f"Bearer {{v}}"}}'),
+                         [("SEC004", 1)])
+        self.assertEqual(secret_findings(f'v = "{FAKE_KEY}"\nheaders["Authorization"] = "Bearer " + v'),
+                         [("SEC004", 1)])
+
+    def test_renamed_password_used_to_log_in(self):
+        self.assertEqual(primary_cwes('p = "hunter2!"\nsmtp.login("me@example.com", p)', "SEC004"), ["CWE-259"])
+        self.assertEqual(primary_cwes('p = "Winter2024!"\nrequests.get(u, auth=("admin", p))', "SEC004"),
+                         ["CWE-259"])
+        self.assertEqual(secret_findings('def connect(h, pw="Tr0ub4dor&3"):\n'
+                                         '    return psycopg2.connect(host=h, password=pw)'), [("SEC004", 1)])
+
+    def test_attribute_and_alias_sinks(self):
+        self.assertEqual(secret_findings(f'k = "{FAKE_KEY}"\nopenai.api_key = k'), [("SEC004", 1)])
+        self.assertEqual(secret_findings(f'k = "{FAKE_KEY}"\nAPI_KEY = k'), [("SEC004", 1)])
+        self.assertEqual(secret_findings(f'''
+            class Client:
+                def __init__(self):
+                    self.k = "{FAKE_KEY}"
+                def headers(self):
+                    return {{"Authorization": "Bearer " + self.k}}
+        '''), [("SEC004", 4)])
+
+    def test_known_formats_are_caught_whatever_the_name(self):
+        self.assertEqual(secret_findings(f'settings_value = "{FAKE_GH}"'), [("SEC004", 1)])
+        self.assertEqual(secret_findings(f'thing = "{FAKE_GH[:4]}" + "{FAKE_GH[4:]}"'), [("SEC004", 1)])
+        self.assertEqual(secret_findings(f'Github("{FAKE_GH}")'), [("SEC004", 1)])
+        self.assertEqual(primary_cwes('DATABASE_URL = "postgres://admin:S3cretPa55@db:5432/app"', "SEC004"),
+                         ["CWE-259"])
+
+    def test_unused_random_looking_value_is_a_possible_secret(self):
+        report = analyze(f'x = "{FAKE_KEY}"\n')
+        finding = next(f for f in report["findings"] if f["rule_id"] == "SEC009")
+        self.assertEqual(finding["severity"], "medium")
+
+    def test_renaming_the_sample_key_keeps_the_finding(self):
+        source = (SAMPLES / "bad_example.py").read_text(encoding="utf-8")
+        renamed = source.replace("API_KEY", "cfg_value")
+        before = [f for f in analyze(source)["findings"] if f["rule_id"] == "SEC004" and f["line"] == 10]
+        after = [f for f in analyze(renamed)["findings"] if f["rule_id"] == "SEC004" and f["line"] == 10]
+        self.assertEqual(len(before), 1)
+        self.assertEqual(len(after), 1)
+        self.assertIn("X-API-Key", after[0]["message"])
+        self.assertEqual(analyze(source)["score"], analyze(renamed)["score"])
+
+    def test_things_that_are_not_secrets(self):
+        quiet = [
+            'API_KEY = os.environ["API_KEY"]\nrequests.get(u, headers={"X-API-Key": API_KEY})',
+            't = "hunter2!"\ndef f(t):\n    return {"Authorization": f"Bearer {t}"}',  # parameter shadows it
+            'expected_sha256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"',
+            'ok = hashlib.sha256(d).hexdigest() == '
+            '"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"',
+            'h = {"Authorization": "Bearer <token>"}',
+            'h = {"Authorization": "Bearer ${API_TOKEN}"}',
+            'URL = "postgres://user:password@localhost/db"',
+            'MODEL = "sentence-transformers/all-MiniLM-L6-v2"',
+            'REQUEST_ID = "437e36fc-07cd-4c69-8d65-d9f35f2997ff"',
+            'BACKEND = "MyCustomAuthenticationBackend1"',
+            'PATH = "/usr/local/lib/python3.11/site-packages"',
+        ]
+        for code in quiet:
+            self.assertEqual(secret_findings(code), [], code)
+
+
 class QualityRuleTests(unittest.TestCase):
     def test_open_inside_with_is_clean(self):
         self.assertIn("REL004", rule_ids("f = open('x')"))
@@ -153,8 +236,8 @@ def fixed(code: str, rule_id: str) -> str:
     code = textwrap.dedent(code)
     report = analyze(code)
     finding = next(f for f in report["findings"] if f["rule_id"] == rule_id)
-    assert finding["fix"], f"no fix for {rule_id}"
-    edits = [Edit(**e) for e in finding["fix"]["edits"]]
+    assert finding["patch"], f"no patch for {rule_id}"
+    edits = [Edit(**e) for e in finding["patch"]["edits"]]
     return apply_edits(code, edits)
 
 
@@ -180,11 +263,11 @@ class FixTests(unittest.TestCase):
 
     def test_user_chosen_program_gets_no_fix(self):
         report = analyze('import subprocess\nsubprocess.run(cmd, shell=True)')
-        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC002")["fix"])
+        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC002")["patch"])
 
     def test_password_hash_gets_no_fix(self):
         report = analyze('import hashlib\ndef hash_password(pw):\n    return hashlib.md5(pw).hexdigest()')
-        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC007")["fix"])
+        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC007")["patch"])
 
     def test_secret_moves_to_environment(self):
         out = fixed('API_KEY = "abcdef123456"', "SEC004")
@@ -215,12 +298,17 @@ class FixTests(unittest.TestCase):
         out = fixed('from flask import *\napp = Flask(__name__)\nx = request.args', "MNT005")
         self.assertIn("from flask import Flask, request", out)
 
+    def test_patch_does_not_replace_fix_advice(self):
+        report = analyze((SAMPLES / "bad_example.py").read_text(encoding="utf-8"))
+        for f in report["findings"]:
+            self.assertIsInstance(f["fix"], str)
+
     def test_every_offered_fix_parses(self):
         report = analyze((SAMPLES / "bad_example.py").read_text(encoding="utf-8"))
         source = (SAMPLES / "bad_example.py").read_text(encoding="utf-8")
         for f in report["findings"]:
-            if f["fix"]:
-                ast.parse(apply_edits(source, [Edit(**e) for e in f["fix"]["edits"]]))
+            if f["patch"]:
+                ast.parse(apply_edits(source, [Edit(**e) for e in f["patch"]["edits"]]))
 
     def test_patch_all_improves_bad_sample(self):
         source = (SAMPLES / "bad_example.py").read_text(encoding="utf-8")

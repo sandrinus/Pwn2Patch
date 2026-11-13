@@ -12,6 +12,8 @@ import re
 import tokenize
 from dataclasses import dataclass
 
+from .secret_scan import SecretMatch, classify_secret, fold_str, is_hash_digest, is_plausible_credential
+
 # Matched against snake_case names, as whole underscore-separated words, so that
 # `db_password` and `apiKey` match but `tokenizer` and `max_tokens` don't.
 SECRET_NAME = re.compile(
@@ -20,6 +22,22 @@ SECRET_NAME = re.compile(
 )
 PASSWORD_NAME = re.compile(r"(?:^|_)(passw(?:or)?d|pwd|pw)(?:_|$)")
 CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+# Keys/arguments that carry credentials even though they aren't named like a secret.
+AUTH_KEY_NAME = re.compile(r"(?:^|_)(authorization|auth|cookie|bearer|passphrase|signing_key|client_secret)(?:_|$)")
+# A random-looking hex digest is fine when the name says it's a hash.
+HASH_LIKE_NAME = re.compile(r"(?:^|_)(hash|digest|hexdigest|checksum|sha\d*|md5|crc\d*|etag|fingerprint|commit|"
+                            r"rev|revision)(?:_|$)")
+
+# Calls whose positional argument N is a credential: name -> (N, what it is, is it a password)
+SINKS_BY_NAME = {
+    "jwt.encode": (1, "the signing key", False), "jwt.decode": (1, "the signing key", False),
+    "hmac.new": (0, "the HMAC key", False), "hmac.digest": (0, "the HMAC key", False),
+}
+SINKS_BY_SHORT_NAME = {
+    "login": (1, "the password", True), "HTTPBasicAuth": (1, "the password", True),
+    "HTTPDigestAuth": (1, "the password", True), "BasicAuth": (1, "the password", True),
+    "Fernet": (0, "the encryption key", False),
+}
 
 # Context-specific CWEs: more precise than the rule's default mapping.
 PASSWORD_SECRET_CWES = ("CWE-259", "CWE-798")   # hard-coded *password* (child of hard-coded credentials)
@@ -63,8 +81,35 @@ def is_password_name(name: str) -> bool:
     return bool(PASSWORD_NAME.search(snake(name)))
 
 
-def secret_cwes(name: str) -> tuple[str, ...]:
-    return PASSWORD_SECRET_CWES if is_password_name(name) else ()
+def secret_cwes(name: str, match: SecretMatch | None = None) -> tuple[str, ...]:
+    return PASSWORD_SECRET_CWES if is_password_name(name) or (match and match.is_password) else ()
+
+
+def is_credential_key(name: str) -> bool:
+    """`password`, `api_key`, `X-API-Key`, `Authorization`, `auth`, ..."""
+    key = snake(name).replace("-", "_")
+    return bool(SECRET_NAME.search(key) or AUTH_KEY_NAME.search(key))
+
+
+def credential_refs(expr: ast.AST) -> list[ast.AST]:
+    """Variables whose value ends up inside `expr`: x, f"Bearer {x}", "Bearer " + x, f"{u}:{x}".encode()."""
+    if isinstance(expr, (ast.Name, ast.Attribute)):
+        return [expr]
+    if isinstance(expr, ast.JoinedStr):
+        return [ref for v in expr.values if isinstance(v, ast.FormattedValue) for ref in credential_refs(v.value)]
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Add, ast.Mod)):
+        return credential_refs(expr.left) + credential_refs(expr.right)
+    if isinstance(expr, ast.Tuple):
+        return [ref for elt in expr.elts for ref in credential_refs(elt)]
+    if isinstance(expr, ast.Call):
+        func = expr.func
+        if isinstance(func, ast.Attribute) and func.attr == "format":
+            return [ref for a in [*expr.args, *(k.value for k in expr.keywords)] for ref in credential_refs(a)]
+        if isinstance(func, ast.Attribute) and func.attr in ("encode", "decode", "strip"):
+            return credential_refs(func.value)
+        if dotted_name(func) in ("str", "bytes", "base64.b64encode", "base64.standard_b64encode") and expr.args:
+            return credential_refs(expr.args[0])
+    return []
 
 
 def dotted_name(node: ast.AST) -> str:
@@ -135,11 +180,12 @@ def is_main_guard(node: ast.If) -> bool:
 
 
 def looks_like_secret(name: str, value: ast.AST) -> bool:
+    """Name-based check: a secret-sounding name holding a constant string (or bytes, or "a" + "b")."""
     if not SECRET_NAME.search(snake(name)):
         return False
-    if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+    text = fold_str(value)
+    if text is None:
         return False
-    text = value.value
     return len(text) >= 6 and " " not in text and text.lower() not in NOT_A_SECRET
 
 
@@ -160,13 +206,76 @@ class PythonAnalyzer(ast.NodeVisitor):
         self._in_main_guard = False
         self._dynamic_str_vars: dict[str, int] = {}  # var name -> line it was built on
 
+        # Secret tracking: hardcoded string constants, so we can see where they're used.
+        Const = tuple[ast.AST, str]                                  # (node to report at, folded value)
+        self._module_consts: dict[str, Const] = {}                   # "API_KEY", "self.token", "Cls.key"
+        self._local_consts: dict[str, Const | None] = {}             # None = local name that isn't a constant
+        self._docstrings: set[int] = set()
+        self._handled: set[int] = set()                              # constants already reported as secrets
+        self._digest_ok: set[int] = set()                            # hex digests in a hash-named context
+
     # ------------------------------------------------------------- plumbing
     def run(self) -> list[Finding]:
         tree = ast.parse(self.source)
+        self._collect_constants(tree)
         self.visit(tree)
         self._check_text()
+        # A value proven to be a credential (SEC004) doesn't also need a "possible secret" (SEC009).
+        proven = {f.line for f in self.findings if f.rule_id == "SEC004"}
+        self.findings = [f for f in self.findings if not (f.rule_id == "SEC009" and f.line in proven)]
         self.findings.sort(key=lambda f: (f.line, f.col))
         return self.findings
+
+    def _collect_constants(self, tree: ast.Module) -> None:
+        """First pass: docstrings, plus every name/attribute that is assigned a constant string."""
+        def assignments(stmt):
+            if isinstance(stmt, ast.Assign):
+                return [(t, stmt.value) for t in stmt.targets]
+            if isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+                return [(stmt.target, stmt.value)]
+            return []
+
+        for node in ast.walk(tree):
+            body = getattr(node, "body", None)
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and body \
+                    and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                    and isinstance(body[0].value.value, str):
+                self._docstrings.add(id(body[0].value))
+            for target, value in assignments(node):           # self.token = "...", config.key = "..."
+                text = fold_str(value)
+                if isinstance(target, ast.Attribute) and text is not None:
+                    self._module_consts[dotted_name(target)] = (target, text)
+        for stmt in tree.body:                                  # module-level names
+            for target, value in assignments(stmt):
+                if isinstance(target, ast.Name):
+                    text = fold_str(value)
+                    if text is not None:
+                        self._module_consts[target.id] = (target, text)
+                    else:
+                        self._module_consts.pop(target.id, None)
+        for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):   # class attributes
+            for stmt in cls.body:
+                for target, value in assignments(stmt):
+                    text = fold_str(value)
+                    if isinstance(target, ast.Name) and text is not None:
+                        self._module_consts[f"self.{target.id}"] = (target, text)
+                        self._module_consts[f"{cls.name}.{target.id}"] = (target, text)
+
+    def _resolve_const(self, key: str):
+        if key in self._local_consts:
+            return self._local_consts[key]
+        return self._module_consts.get(key)
+
+    def _mark_handled(self, node: ast.AST) -> None:
+        for n in ast.walk(node):
+            if isinstance(n, ast.Constant):
+                self._handled.add(id(n))
+
+    def _allow_digest(self, name: str | None, value: ast.AST) -> None:
+        """`expected_sha256 = "e3b0..."` is a hash, not a key: don't report it as a possible secret."""
+        text = fold_str(value)
+        if name and text is not None and HASH_LIKE_NAME.search(snake(name)) and is_hash_digest(text.strip()):
+            self._digest_ok.update(id(n) for n in ast.walk(value))
 
     def report(self, rule_id: str, node_or_line, message: str, cwe: tuple[str, ...] = ()) -> None:
         if rule_id in self.disabled:
@@ -175,6 +284,8 @@ class PythonAnalyzer(ast.NodeVisitor):
             line, col = node_or_line, 0
         else:
             line, col = getattr(node_or_line, "lineno", 1), getattr(node_or_line, "col_offset", 0)
+        if rule_id in ("SEC004", "SEC009") and isinstance(node_or_line, ast.AST):
+            self._mark_handled(node_or_line)
         if (rule_id, line) in self._seen:
             return
         self._seen.add((rule_id, line))
@@ -231,12 +342,27 @@ class PythonAnalyzer(ast.NodeVisitor):
     # ------------------------------------------------------------- functions
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._check_function(node)
-        saved_depth, saved_vars = self._depth, self._dynamic_str_vars
+        saved_depth, saved_vars, saved_consts = self._depth, self._dynamic_str_vars, self._local_consts
         self._depth, self._dynamic_str_vars = 0, {}
+        self._local_consts = self._parameter_consts(node.args)
         self._func_stack.append(node)
         self.generic_visit(node)
         self._func_stack.pop()
-        self._depth, self._dynamic_str_vars = saved_depth, saved_vars
+        self._depth, self._dynamic_str_vars, self._local_consts = saved_depth, saved_vars, saved_consts
+
+    @staticmethod
+    def _parameter_consts(args: ast.arguments) -> dict:
+        """Parameters shadow module names; a parameter with a constant default is itself a constant."""
+        params = [*args.posonlyargs, *args.args, *args.kwonlyargs, *filter(None, [args.vararg, args.kwarg])]
+        consts: dict = {p.arg: None for p in params}
+        positional = args.posonlyargs + args.args
+        pairs = list(zip(positional[len(positional) - len(args.defaults):], args.defaults))
+        pairs += [(a, d) for a, d in zip(args.kwonlyargs, args.kw_defaults) if d is not None]
+        for param, default in pairs:
+            text = fold_str(default)
+            if text is not None:
+                consts[param.arg] = (default, text)
+        return consts
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
@@ -322,11 +448,23 @@ class PythonAnalyzer(ast.NodeVisitor):
                 self.report("SEC003", node, f"`{first.id}` (built with string formatting on line {built_on}) "
                                             f"is passed to `{short}()`.")
 
-        # SEC004 secrets passed as keyword arguments, e.g. connect(password="...")
+        # SEC004 secrets passed as keyword arguments, e.g. connect(password="...") or connect(password=x)
         for kw in node.keywords:
-            if kw.arg and looks_like_secret(kw.arg, kw.value):
+            if not kw.arg:
+                continue
+            if looks_like_secret(kw.arg, kw.value):
                 self.report("SEC004", kw.value, f"Hardcoded value passed as `{kw.arg}=`.",
                             cwe=secret_cwes(kw.arg))
+            if kw.arg == "auth" and isinstance(kw.value, (ast.Tuple, ast.List)) and len(kw.value.elts) == 2:
+                self._check_sink(kw.value.elts[1], f"the password in `{name}(auth=(user, password))`", True)
+            elif is_credential_key(kw.arg):
+                self._check_sink(kw.value, f"`{kw.arg}=` in `{name}()`", is_password_name(kw.arg))
+            self._allow_digest(kw.arg, kw.value)
+        # ...and positionally, e.g. smtp.login(user, x), HTTPBasicAuth(user, x), jwt.encode(data, x)
+        sink = SINKS_BY_NAME.get(name) or SINKS_BY_SHORT_NAME.get(short)
+        if sink and len(node.args) > sink[0]:
+            index, what, is_password = sink
+            self._check_sink(node.args[index], f"{what} in `{name}()`", is_password)
 
         # SEC005 unsafe deserialization
         if name in DESERIALIZERS:
@@ -369,6 +507,54 @@ class PythonAnalyzer(ast.NodeVisitor):
 
         self.generic_visit(node)
 
+    def _check_sink(self, expr: ast.AST, where: str, is_password: bool = False) -> None:
+        """`expr` is used as a credential. Report it if it's a hardcoded value, whatever it's called."""
+        cwe = PASSWORD_SECRET_CWES if is_password else ()
+        text = fold_str(expr)
+        if text is not None:                                    # the literal itself: headers={"Authorization": "Bearer ..."}
+            if is_plausible_credential(text):
+                self.report("SEC004", expr, f"Hardcoded credential used as {where}.", cwe=cwe)
+            return
+        for ref in credential_refs(expr):                       # a variable holding a literal: headers={"X-API-Key": x}
+            key = dotted_name(ref)
+            const = self._resolve_const(key)
+            if const is None:
+                continue
+            target, value = const
+            if is_plausible_credential(value):
+                self.report("SEC004", target, f"`{key}` holds a hardcoded value that is used as {where} "
+                                              f"on line {expr.lineno}.", cwe=cwe or secret_cwes(key))
+
+    def _check_secret_value(self, name: str, target: ast.AST, value: ast.AST, text: str) -> None:
+        """A name is assigned a constant: check the name AND the value, so renaming doesn't hide a key."""
+        match = classify_secret(text)
+        if looks_like_secret(name, value):
+            detail = f" (it looks like a {match.label})" if match and match.kind == "format" else ""
+            self.report("SEC004", target, f"`{name}` is assigned a hardcoded value{detail}.",
+                        cwe=secret_cwes(name, match))
+        elif match and match.kind == "format":
+            self.report("SEC004", target, f"`{name}` holds a {match.label}, even though its name doesn't say so.",
+                        cwe=secret_cwes(name, match))
+        elif match:
+            self._allow_digest(name, value)
+            if not any(id(n) in self._digest_ok for n in ast.walk(value)):
+                self.report("SEC009", target, f"`{name}` holds a {match.label}, which is what keys and "
+                                              f"tokens look like.")
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        """String literals anywhere else (call arguments, returns, comparisons, f-string parts, ...)."""
+        if id(node) in self._handled:
+            return
+        text = fold_str(node)
+        if text is None or len(text) < 10:
+            return
+        match = classify_secret(text)
+        if match and match.kind == "format":
+            self.report("SEC004", node, f"String literal looks like a {match.label}.",
+                        cwe=PASSWORD_SECRET_CWES if match.is_password else ())
+        elif match and id(node) not in self._docstrings and id(node) not in self._digest_ok:
+            self.report("SEC009", node, f"String literal is a {match.label}, which is what keys and tokens look like.")
+
     def _hashes_password(self, call: ast.Call) -> bool:
         """True if the hash runs inside a password-named function or on a password-named variable."""
         if self._func_stack and is_password_name(self._func_stack[-1].name):
@@ -381,8 +567,14 @@ class PythonAnalyzer(ast.NodeVisitor):
             target.attr if isinstance(target, ast.Attribute) else None
         if name is None:
             return
-        if looks_like_secret(name, value):
-            self.report("SEC004", target, f"`{name}` is assigned a hardcoded value.", cwe=secret_cwes(name))
+        text = fold_str(value)
+        if text is not None:
+            self._mark_handled(value)
+            self._check_secret_value(name, target, value, text)
+        elif is_credential_key(name):                           # API_KEY = x, where x = "..." somewhere else
+            self._check_sink(value, f"`{dotted_name(target)}`", is_password_name(name))
+        if self._func_stack and isinstance(target, ast.Name):
+            self._local_consts[name] = (target, text) if text is not None else None
         if isinstance(target, ast.Attribute) and name == "debug" and is_const(value, True):
             self.report("SEC008", target, f"`{dotted_name(target)} = True` enables debug mode.")
         if isinstance(target, ast.Name):
@@ -391,14 +583,23 @@ class PythonAnalyzer(ast.NodeVisitor):
             else:
                 self._dynamic_str_vars.pop(name, None)
 
+    def _check_subscript_target(self, target: ast.AST, value: ast.AST) -> None:
+        """headers["Authorization"] = f"Bearer {x}",  os.environ["API_KEY"] = "..." """
+        if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant) \
+                and isinstance(target.slice.value, str) and is_credential_key(target.slice.value):
+            key = target.slice.value
+            self._check_sink(value, f'`{dotted_name(target.value)}["{key}"]`', is_password_name(key))
+
     def visit_Assign(self, node: ast.Assign) -> None:
         for target in node.targets:
             self._check_assignment_target(target, node.value)
+            self._check_subscript_target(target, node.value)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         if node.value is not None:
             self._check_assignment_target(node.target, node.value)
+            self._check_subscript_target(node.target, node.value)
         self.generic_visit(node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
@@ -410,9 +611,14 @@ class PythonAnalyzer(ast.NodeVisitor):
 
     def visit_Dict(self, node: ast.Dict) -> None:
         for key, value in zip(node.keys, node.values):
-            if isinstance(key, ast.Constant) and isinstance(key.value, str) and looks_like_secret(key.value, value):
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                continue
+            if looks_like_secret(key.value, value):
                 self.report("SEC004", value, f"Dictionary key `{key.value}` holds a hardcoded value.",
                             cwe=secret_cwes(key.value))
+            if is_credential_key(key.value):        # {"Authorization": f"Bearer {x}"}, {"X-API-Key": x}
+                self._check_sink(value, f"the `{key.value}` entry", is_password_name(key.value))
+            self._allow_digest(key.value, value)
         self.generic_visit(node)
 
     # ------------------------------------------------------------- misc
@@ -425,6 +631,12 @@ class PythonAnalyzer(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Compare(self, node: ast.Compare) -> None:
+        # digest == "e3b0c442..." / hashlib.sha256(x).hexdigest() == "...": a known hash, not a key
+        operands = [node.left, *node.comparators]
+        names = [dotted_name(o.func if isinstance(o, ast.Call) else o).replace(".", "_") for o in operands]
+        hash_name = next((n for n in names if HASH_LIKE_NAME.search(snake(n))), None)
+        for operand in operands:
+            self._allow_digest(hash_name, operand)
         for op, right in zip(node.ops, node.comparators):
             if isinstance(op, (ast.Eq, ast.NotEq)) and is_const(right, None):
                 bad, good = ("==", "is None") if isinstance(op, ast.Eq) else ("!=", "is not None")

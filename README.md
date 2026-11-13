@@ -16,16 +16,22 @@ python server.py
 Then open http://127.0.0.1:8000. The messy sample loads and is analyzed straight away.
 
 * **Live**: the report re-runs as you type (turn off with the *Live* toggle; Ctrl/⌘+Enter runs it by hand).
-* **Hover** an underlined line to see what's wrong with it; click a gutter dot or a mark in the right-hand ruler to jump to it.
-* **Preview fix** on a finding shows the exact patch as a diff; **Apply** it and the score badge shows what changed.
-* **Patch all** applies every safe automatic fix in one go (46 → 74 on the messy sample). **Undo** reverts a patch.
-* Click a category bar, a CWE or a severity / *Fixable* chip to filter.
+  Live analysis and syntax highlighting switch off automatically for files over 60,000 characters.
+* **Hover** an underlined line, or put the cursor on it and read the status bar under the editor.
+* **Keyboard**: F8 / Shift+F8 jump to the next / previous issue, Ctrl/⌘+. previews the patch for the cursor's line,
+  and j / k step through findings when the editor doesn't have focus.
+* **Preview fix** shows the exact patch as a diff; **Apply** it and the score badge shows what changed.
+  **Patch all** applies every automatic fix in one go (46 → 74 on the messy sample). **Undo** reverts a patch.
+* **Suppress** adds a `# pwn2patch: ignore[RULE]` comment to the finding's line.
+* The report has three tabs (Findings, Categories, Weaknesses). Findings can be grouped by severity, rule or line
+  and filtered by severity, category, CWE or *Fixable*. "on line N" in a message is a link.
+* Hardcoded secrets are masked in the report, the patch previews and the JSON export (*Show* reveals one).
 
 ## Patching
 
 `checker/fixes.py` turns findings into line edits: parameterized SQL, argument-list subprocess calls,
 secrets read from `os.environ`, `with open(...)`, `is None`, renames that update every use in the file, and so on
-(17 of 25 rules). Every fix is checked before it is offered: the patched code must still parse.
+(17 of 26 rules). Every fix is checked before it is offered: the patched code must still parse.
 
 Some findings deliberately get **no** automatic fix, because any mechanical change would be wrong or misleading:
 a route that lets the user choose the program to run, MD5 on a password (SHA-256 would be just as wrong there; it
@@ -76,6 +82,25 @@ Tests:
 python -m unittest
 ```
 
+## Frontend contract
+
+The UI reads a few optional fields that the backend is adding. Until they arrive it falls back to today's behavior,
+so they can land in any order:
+
+| Field | Meaning | UI without it |
+|---|---|---|
+| `finding.patch` | `{title, note, edits}`: the automatic patch (`finding.fix` is the rule's advice text) | required today |
+| `finding.patch.safety` | `"safe"` or `"behavior_change"` | every patch looks safe; button says *Patch all* |
+| `finding.points.gain_if_fixed` | overall points recovered by fixing just this finding | shows the raw penalty |
+| `finding.evidence` | which signal found a secret: `name`, `value`, `usage` or `entropy` | no tag |
+| `report.suppressed` | findings hidden by an ignore comment (same shape as `findings`) | *Suppress* adds the comment and says the analyzer doesn't read it yet |
+| `report.patches_truncated` | `true` when only some findings got a patch prepared | no notice |
+| `POST /api/fix` `include_behavior_changes` | request flag; `false` = only safe patches | ignored |
+| `/api/fix` response `complete`, `applied[].safety` | `complete: false` when the run stopped at its limit | no notice / no grouping |
+
+Suppression comments look like `# pwn2patch: ignore[SEC004]` or `# pwn2patch: ignore[SEC004, STY003]` at the end of
+the finding's line; a bare `# pwn2patch: ignore` covers every rule on that line.
+
 ## How it works
 
 ```
@@ -89,6 +114,7 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 | `checker/rules.py` | Rule catalog: id, category, severity, why, fix, CWE mapping, PEP reference |
 | `checker/cwe.py` | CWE catalog: official MITRE titles, short labels, MITRE's mapping guidance |
 | `checker/analyzer.py` | Walks the AST and reports rule violations with line numbers |
+| `checker/secret_scan.py` | Secret detection by value: provider key formats, entropy, constant folding |
 | `checker/scoring.py` | Category scores → weighted overall score → grade → PASS/FAIL gate |
 | `checker/policy.json` | The "compliance policy": weights, penalties, limits, gate, disabled rules |
 | `checker/engine.py` | `analyze(source) -> dict`: the one function everything else calls |
@@ -108,21 +134,40 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 
 It's deterministic: the same code always gets the same score.
 
-### Rules (25)
+### Rules (26)
 
 | Category | Rules |
 |---|---|
-| Security | eval/exec, shell injection, SQL injection (incl. via variables), hardcoded secrets, pickle/yaml deserialization, `verify=False`, MD5/SHA-1, Flask debug mode |
+| Security | eval/exec, shell injection, SQL injection (incl. via variables), hardcoded secrets (by name, value and usage), possible secrets (random-looking strings), pickle/yaml deserialization, `verify=False`, MD5/SHA-1, Flask debug mode |
 | Reliability | bare `except`, swallowed exceptions, mutable defaults, `open()` without `with`, `== None` |
 | Maintainability | long functions, cyclomatic complexity, too many params, deep nesting, wildcard imports, `global` |
 | Style | docstrings, naming, line length, `print` vs logging, TODO/FIXME, type hints |
+
+### Hardcoded secrets
+
+Renaming `API_KEY` to `x` doesn't make the key any less secret, so a variable's name is only one of three signals:
+
+| Signal | Example it catches | Rule |
+|---|---|---|
+| **Name**: the variable, argument or dict key sounds secret | `DB_PASSWORD = "..."`, `connect(password="...")` | SEC004 (high) |
+| **Value**: the string matches a provider's key format, whatever it's called | `settings_value = "ghp_..."`, `"AKIA..."`, `"sk-..."`, `"postgres://admin:pw@db"`, even split as `"ghp_" + "..."` | SEC004 (high) |
+| **Usage**: a hardcoded value flows into a place that takes a credential | `x = "..."` later used in `headers={"X-API-Key": x}`, `f"Bearer {x}"`, `password=x`, `auth=(user, x)`, `smtp.login(user, x)`, `openai.api_key = x`, `jwt.encode(data, x)` | SEC004 (high) |
+| **Value**: a long, random-looking string with no other evidence | `x = "k3yZq8vR2kLm9XyT4wPb..."` | SEC009 (medium) |
+
+SEC009 is medium (it costs points but doesn't fail the gate on its own), because hashes and IDs look random too.
+The entropy check was tuned against real-shaped keys and look-alikes: 32+ character random keys are caught about
+90-100% of the time, while paths, URLs, UUIDs, model names (`all-MiniLM-L6-v2`), CamelCase names and hex digests
+assigned to hash-named variables (`expected_sha256 = "e3b0..."`) are not flagged.
+
+**Limit:** a short, human-chosen password that is renamed *and never used* (`x = "SuperSecret123!"`) looks like
+any other string, and no static scanner can tell. As soon as it's used as a credential, it's caught.
 
 ### CWE mapping
 
 Every finding carries a list of [CWE](https://cwe.mitre.org) entries, most specific first, and the report includes
 a `cwe_summary` (one row per weakness, with counts) and `cwe_coverage` (how many findings have a CWE).
 
-* **19 of 25 rules map to a CWE.** All titles were checked against MITRE (CWE 5.0).
+* **20 of 26 rules map to a CWE.** All titles were checked against MITRE (CWE 5.0).
   The other 6 rules have no accurate CWE: mutable defaults, `== None`, function length, wildcard imports, `print` and type hints.
   They're left unmapped on purpose, since a forced mapping would be misleading.
 * **Context makes it more specific.** A hardcoded *password* maps to CWE-259 (Hard-coded Password), not just
@@ -144,7 +189,7 @@ a `cwe_summary` (one row per weakness, with counts) and `cwe_coverage` (how many
 | SEC007 weak hash | CWE-328 (CWE-916 for passwords) | MNT006 global | CWE-1108 |
 | SEC008 debug mode | CWE-489 | STY001 docstring | CWE-1111 *(quality)* |
 | STY002 naming | CWE-1099 *(quality)* | STY003 line length | CWE-1078 *(quality)* |
-| STY005 TODO/FIXME | CWE-546 | | |
+| STY005 TODO/FIXME | CWE-546 | SEC009 possible secret | CWE-798 |
 
 ## Adding a rule
 
