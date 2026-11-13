@@ -1,11 +1,12 @@
 # Pwn2Patch (Hacknight demo)
 
-Paste Python code and get a report: a score out of 100, a grade, a score for each category, and a **PASS/FAIL gate** based on a policy file.
+Paste Python code, or link a public Git repository, and get a report: a score out of 100, a grade, a score for each category, and a **PASS/FAIL gate** based on a policy file.
 Every finding says *what* is wrong, *why* it matters, *how* to fix it, and links to the CWE or PEP behind it.
 
 The code is **parsed, never executed**. It is turned into an AST and pattern-matched, so it is safe to paste untrusted code.
 
-No dependencies: Python 3.10+ standard library only.
+No dependencies: Python 3.10+ standard library only. Scanning a repository uses `git` if it's installed
+(otherwise github.com links are downloaded as a zip with the standard library).
 
 ## Run it
 
@@ -26,6 +27,33 @@ Then open http://127.0.0.1:8000. The messy sample loads and is analyzed straight
 * The report has three tabs (Findings, Categories, Weaknesses). Findings can be grouped by severity, rule or line
   and filtered by severity, category, CWE or *Fixable*. "on line N" in a message is a link.
 * Hardcoded secrets are masked in the report, the patch previews and the JSON export (*Show* reveals one).
+
+## Scan a repository
+
+Switch to **Repository** in the header and paste a link: `https://github.com/owner/repo`, the `owner/repo` shorthand,
+a `/tree/<branch>` link, or any public https Git host (GitLab, Bitbucket, ...).
+
+* Only the `.py` files are downloaded: a shallow, blobless `git clone` with a sparse checkout of exactly the files
+  that will be scanned. Without git, github.com links fall back to GitHub's zip archive.
+* Every Python file is analyzed (up to 1,500 per repository; dependency and build folders such as `venv/`,
+  `node_modules/`, `build/` and `site-packages/` are skipped). Pallets' Flask (83 files) takes about a second;
+  Django (1,500 of its 2,942 files) about 8 seconds.
+* The **file tree** shows each file's grade, finding count and worst severity, rolled up into folders.
+  Filter by name, show only files with issues, or sort worst-first. Arrow keys move through the tree.
+* The **repository overview** shows the repo score (the average file score, weighted by lines of code), how many
+  files pass the gate, severity totals, the files to look at first and the most common issues. Click a rule or a
+  severity to list the files that have it. *Export JSON* downloads the whole scan.
+* **Click a file** to open it in the editor with the full report: patches, *Patch all*, Workers AI drafts and
+  suppressions all work. Repository files are **view-only**: edits and patches change the copy in your browser and are
+  discarded when you open another file. *GitHub ↗* opens the same file at the scanned commit.
+* The URL records what's open (`#repo=pallets/flask&file=src/flask/app.py`), so reloading, the back button and
+  shared links return to the same file.
+
+Safety: only `https://` links to public host names are accepted (no IP addresses, `localhost`, private suffixes or
+credentials in the URL). git runs with hooks, submodules, LFS, symlinks, credential helpers and non-https protocols
+turned off, under a time limit; zip archives are extracted with path, symlink and size checks. Nothing from the
+repository is ever executed or imported. The page is served with a Content-Security-Policy that allows only its own
+scripts. Scans are kept in a temporary folder (the last 5) and deleted when the server stops.
 
 ## Patching
 
@@ -120,9 +148,11 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 | `checker/engine.py` | `analyze(source) -> dict`: the one function everything else calls |
 | `checker/ai_fix.py` | Workers AI patches for findings with no mechanical fix, verified by the analyzer |
 | `checker/fixes.py` | Automatic patches: line edits per finding, verified to parse; `fix_all` for *Patch all* |
-| `server.py` | Standard-library HTTP server: `POST /api/analyze`, `POST /api/fix`, `POST /api/ai-fix`, `GET /api/policy`, `GET /api/samples` |
+| `repos.py` | Repository scans: link validation, sparse `git clone` / GitHub zip fetch, per-file summaries, background jobs |
+| `server.py` | Standard-library HTTP server: `POST /api/analyze`, `POST /api/fix`, `POST /api/ai-fix`, `POST /api/repo`, `GET /api/repo/<id>`, `GET /api/repo/<id>/file`, `GET /api/policy`, `GET /api/samples`, `/static/*` |
 | `cli.py` | Terminal output + exit codes for CI |
-| `static/index.html` | The whole UI: editor with underlines and hover cards, score ring and change badge, fix previews, filters, policy viewer |
+| `static/index.html`, `static/styles.css` | The page's markup and styles |
+| `static/js/*.js` | The UI as native ES modules (no build step): `editor` (highlighting, underlines, hover card, status bar), `analysis`, `report` (tabs, findings, filters), `patches` (diffs, Patch all, AI drafts, suppressions, undo), `repo` (tree, overview, URL routing), `keys`, `policy`, `state`, `util`, `main` |
 
 ### Scoring
 
@@ -202,5 +232,6 @@ a `cwe_summary` (one row per weakness, with counts) and `cwe_coverage` (how many
 
 * **AI explanations**: send the findings (not just the raw code) to an LLM to write a personalized fix or patch. The score stays deterministic.
 * **More languages**: run `eslint` / `semgrep` through `subprocess` and map their output into the same `Finding` format.
-* **Benchmarks**: run the checker over popular open-source repos and show "your complexity is worse than 80% of Flask's functions".
+* **Benchmarks**: the repository scanner makes this easy: show "your complexity is worse than 80% of Flask's functions".
+* **Repo patches**: keep edits per file while browsing a repository and download them as one `git apply`-ready patch.
 * **GitHub Action**: `python cli.py .` already exits 1 on FAIL, so it can block PRs today.

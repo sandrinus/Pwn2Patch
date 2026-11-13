@@ -53,8 +53,12 @@ def cwe_summary(findings: list[dict]) -> list[dict]:
     return sorted(rows.values(), key=lambda r: (severity_rank[r["worst_severity"]], -r["count"], r["id"]))
 
 
-def analyze(source: str, policy: dict | None = None) -> dict:
-    """Analyze Python source code against a policy. The code is never executed."""
+def analyze(source: str, policy: dict | None = None, *, patches: bool = True) -> dict:
+    """Analyze Python source code against a policy. The code is never executed.
+
+    patches=False skips preparing automatic patches (the slowest step); a repo scan
+    uses it for every file and prepares patches only for the file being viewed.
+    """
     policy = policy or load_policy()
 
     if len(source) > MAX_SOURCE_CHARS:
@@ -79,7 +83,7 @@ def analyze(source: str, policy: dict | None = None) -> dict:
     }
 
     severity_rank = {sev: i for i, sev in enumerate(SEVERITIES)}
-    fix_ctx = FixContext(source, tree)
+    fix_ctx = FixContext(source, tree) if patches else None
     weights, penalties = policy["weights"], policy["penalties"]
     total_weight = sum(weights.values()) or 1
     cap = policy.get("max_counted_per_rule", 3)
@@ -95,7 +99,7 @@ def analyze(source: str, policy: dict | None = None) -> dict:
         seen_per_rule[f.rule_id] = seen_per_rule.get(f.rule_id, 0) + 1
         counted = seen_per_rule[f.rule_id] <= cap
         penalty = penalties[rule.severity] if counted else 0
-        fix = suggest_fix(fix_ctx, f) if index < MAX_FIX_SUGGESTIONS else None
+        fix = suggest_fix(fix_ctx, f) if fix_ctx and index < MAX_FIX_SUGGESTIONS else None
         # What fixing just this finding would add to the overall score. Removing one of
         # 5 identical findings gains nothing (only 3 count), and a category already
         # clamped at 0 only rises once its total penalty drops below 100.
