@@ -1,4 +1,4 @@
-# Compliance Checker (Hacknight demo)
+# Pwn2Patch (Hacknight demo)
 
 Paste Python code and get a report: a score out of 100, a grade, a score for each category, and a **PASS/FAIL gate** based on a policy file.
 Every finding says *what* is wrong, *why* it matters, *how* to fix it, and links to the CWE or PEP behind it.
@@ -13,8 +13,24 @@ No dependencies: Python 3.10+ standard library only.
 python server.py
 ```
 
-Then open http://127.0.0.1:8000. Click **Load messy sample**, then **Analyze** (or press Ctrl+Enter).
-Click a finding to jump to its line; click a category bar or a severity chip to filter.
+Then open http://127.0.0.1:8000. The messy sample loads and is analyzed straight away.
+
+* **Live**: the report re-runs as you type (turn off with the *Live* toggle; Ctrl/⌘+Enter runs it by hand).
+* **Hover** an underlined line to see what's wrong with it; click a gutter dot or a mark in the right-hand ruler to jump to it.
+* **Preview fix** on a finding shows the exact patch as a diff; **Apply** it and the score badge shows what changed.
+* **Patch all** applies every safe automatic fix in one go (46 → 74 on the messy sample). **Undo** reverts a patch.
+* Click a category bar, a CWE or a severity / *Fixable* chip to filter.
+
+## Patching
+
+`checker/fixes.py` turns findings into line edits: parameterized SQL, argument-list subprocess calls,
+secrets read from `os.environ`, `with open(...)`, `is None`, renames that update every use in the file, and so on
+(17 of 25 rules). Every fix is checked before it is offered: the patched code must still parse.
+
+Some findings deliberately get **no** automatic fix, because any mechanical change would be wrong or misleading:
+a route that lets the user choose the program to run, MD5 on a password (SHA-256 would be just as wrong there; it
+needs bcrypt/argon2 and a salt), a hardcoded default parameter (an API change), long or complex functions.
+*Patch all* applies fixes one at a time and re-analyzes after each, so they never conflict.
 
 Command line / CI (exit code 1 when the gate fails):
 
@@ -45,9 +61,10 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 | `checker/scoring.py` | Category scores → weighted overall score → grade → PASS/FAIL gate |
 | `checker/policy.json` | The "compliance policy": weights, penalties, limits, gate, disabled rules |
 | `checker/engine.py` | `analyze(source) -> dict`: the one function everything else calls |
-| `server.py` | Standard-library HTTP server: `POST /api/analyze`, `GET /api/policy`, `GET /api/samples` |
+| `checker/fixes.py` | Automatic patches: line edits per finding, verified to parse; `fix_all` for *Patch all* |
+| `server.py` | Standard-library HTTP server: `POST /api/analyze`, `POST /api/fix`, `GET /api/policy`, `GET /api/samples` |
 | `cli.py` | Terminal output + exit codes for CI |
-| `static/index.html` | The whole UI: editor with line markers, score ring, filters, policy viewer |
+| `static/index.html` | The whole UI: editor with underlines and hover cards, score ring and change badge, fix previews, filters, policy viewer |
 
 ### Scoring
 

@@ -1,4 +1,4 @@
-"""Web server for the demo UI. Standard library only.
+"""Pwn2Patch web server. Standard library only.
 
     python server.py            -> http://127.0.0.1:8000
     python server.py --port 9000
@@ -6,6 +6,7 @@
 Endpoints
     GET  /               the web UI (static/index.html)
     POST /api/analyze    {"code": "..."}  ->  analysis report (JSON)
+    POST /api/fix        {"code": "..."}  ->  every automatic fix applied, with a diff
     GET  /api/samples    {"bad_example": "...", "good_example": "..."}
     GET  /api/policy     the active policy, the full rule catalog and the CWE catalog
 """
@@ -17,7 +18,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from checker import CWES, RULES, analyze, load_policy
+from checker import CWES, RULES, analyze, load_policy, patch_all
 
 ROOT = Path(__file__).resolve().parent
 INDEX_HTML = ROOT / "static" / "index.html"
@@ -27,7 +28,7 @@ POLICY = load_policy()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ComplianceChecker/0.1"
+    server_version = "Pwn2Patch/0.2"
 
     # ------------------------------------------------------------ routes
     def do_GET(self) -> None:
@@ -47,7 +48,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
-        if self.path.split("?", 1)[0] != "/api/analyze":
+        handlers = {"/api/analyze": analyze, "/api/fix": patch_all}
+        handler = handlers.get(self.path.split("?", 1)[0])
+        if handler is None:
             self._send_json({"error": "Not found"}, HTTPStatus.NOT_FOUND)
             return
         try:
@@ -67,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(code, str):
             self._send_json({"error": "Expected {\"code\": \"...\"}"}, HTTPStatus.BAD_REQUEST)
             return
-        self._send_json(analyze(code, POLICY))
+        self._send_json(handler(code, POLICY))
 
     # ------------------------------------------------------------ helpers
     def _send(self, body: bytes, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -87,13 +90,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the compliance checker web UI.")
+    parser = argparse.ArgumentParser(description="Run the Pwn2Patch web UI.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Compliance checker running at http://{args.host}:{args.port}  (Ctrl+C to stop)", flush=True)
+    print(f"Pwn2Patch running at http://{args.host}:{args.port}  (Ctrl+C to stop)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

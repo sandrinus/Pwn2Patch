@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Compliance Checker</title>
+<title>Pwn2Patch</title>
 <style>
   :root {
     --bg: #f5f6f8; --panel: #ffffff; --panel-2: #f0f2f5; --code-bg: #fbfbfc;
@@ -177,6 +177,64 @@
   th { color: var(--muted); font-weight: 600; font-size: 12px; }
   td.sev-cell { color: var(--sev-color); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
 
+  /* ---------- Pwn2Patch additions ---------- */
+  header h1 .two { color: var(--accent); }
+  .icon-btn { width: 32px; height: 32px; padding: 0; display: grid; place-items: center; }
+  .toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--accent); margin: 0; }
+
+  /* editor: column underlines, overview ruler, hover card */
+  .squiggles { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #squiggles { position: relative; will-change: transform; }
+  .squiggle { position: absolute; height: 2px; background: repeating-linear-gradient(90deg, var(--sev-color) 0 4px, transparent 4px 6px); border-radius: 1px; }
+  .ruler { width: 12px; flex: none; position: relative; border-left: 1px solid var(--border); background: var(--panel); }
+  .tick { position: absolute; left: 2px; right: 2px; height: 4px; min-height: 3px; border-radius: 2px; background: var(--sev-color); cursor: pointer; padding: 0; border: 0; }
+  .tick:hover { left: 0; right: 0; }
+  .hovercard { position: fixed; z-index: 20; max-width: 420px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.18); padding: 6px; font-size: 13px; display: none; }
+  .hovercard.show { display: block; }
+  .hc-item { padding: 6px 8px; border-left: 3px solid var(--sev-color); border-radius: 4px; }
+  .hc-item + .hc-item { margin-top: 4px; }
+  .hc-item .sev { width: auto; margin-right: 6px; }
+  .hc-item p { margin: 2px 0 4px; color: var(--muted); }
+
+  /* score change between runs */
+  .delta { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+  .delta.up { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+  .delta.down { color: var(--bad); background: color-mix(in srgb, var(--bad) 14%, transparent); }
+  .delta.same { color: var(--muted); background: var(--panel-2); }
+  .delta-detail { color: var(--muted); font-size: 12.5px; margin-top: 4px; }
+  @keyframes celebrate { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+  .celebrate .ring, .celebrate .gate { animation: celebrate 0.7s ease 2; }
+
+  /* findings: points and fixes */
+  .pts { font: 600 11.5px var(--mono); color: var(--bad); flex: none; font-variant-numeric: tabular-nums; }
+  .pts.uncounted { color: var(--faint); font-weight: 400; }
+  .finding-actions { display: flex; align-items: center; gap: 8px; margin: 6px 0; flex-wrap: wrap; }
+  .fix-btn { border: 1px solid color-mix(in srgb, var(--good) 50%, var(--border)); color: var(--good); background: color-mix(in srgb, var(--good) 8%, transparent); border-radius: 6px; padding: 3px 10px; font-size: 12.5px; font-weight: 600; }
+  .fix-btn:hover { background: color-mix(in srgb, var(--good) 16%, transparent); }
+  .manual { font-size: 12px; color: var(--faint); }
+  .patch-all { background: var(--good); color: #fff; border: 0; border-radius: 8px; padding: 6px 12px; font-weight: 700; font-size: 13px; }
+  :root[data-theme="dark"] .patch-all { color: #0f1115; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .patch-all { color: #0f1115; } }
+  .patch-all:disabled { opacity: 0.6; cursor: progress; }
+
+  /* diff dialog */
+  .diff { font: 12.5px/1.55 var(--mono); border: 1px solid var(--border); border-radius: 8px; overflow: auto; background: var(--code-bg); max-height: 55vh; }
+  .diff div { white-space: pre; padding: 0 10px 0 0; min-width: max-content; }
+  .diff .ln-no { display: inline-block; width: 42px; padding-right: 8px; text-align: right; color: var(--faint); user-select: none; }
+  .diff .add { background: color-mix(in srgb, var(--good) 14%, transparent); }
+  .diff .del { background: color-mix(in srgb, var(--bad) 13%, transparent); }
+  .diff .hunk { color: var(--muted); background: var(--panel-2); padding: 2px 10px; }
+  .dialog-foot { display: flex; gap: 8px; justify-content: flex-end; align-items: center; padding: 12px 18px; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--panel); }
+  .dialog-foot .meta { flex: 1; }
+  .fix-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--panel-2); font-size: 13px; }
+  .applied-list { columns: 2; margin: 0 0 12px; padding-left: 18px; font-size: 12.5px; color: var(--muted); }
+  .score-preview { font-size: 15px; margin: 0 0 10px; }
+  .score-preview b { font-variant-numeric: tabular-nums; }
+
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 10px; font-size: 13.5px; font-weight: 600; transition: opacity 0.2s, transform 0.2s; pointer-events: none; z-index: 30; max-width: calc(100vw - 32px); }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
   @media (max-width: 980px) {
     main { grid-template-columns: 1fr; padding: 12px 16px 16px; }
     .editor-panel { height: 60vh; min-height: 360px; }
@@ -194,34 +252,39 @@
 <body>
 <header>
   <div class="logo" aria-hidden="true">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5l-8-3Z"/><path d="M9 12h6M12 9v6"/></svg>
   </div>
   <div>
-    <h1>Compliance Checker</h1>
-    <div class="sub">Static analysis for Python · scores code against a security &amp; best-practice policy</div>
+    <h1>Pwn<span class="two">2</span>Patch</h1>
+    <div class="sub">Find the vulnerabilities in your Python, patch them, and watch the score climb · code is parsed, never run</div>
   </div>
   <div class="spacer"></div>
+  <button class="ghost icon-btn" id="theme-btn" title="Switch light / dark theme" aria-label="Switch theme">◐</button>
   <button class="ghost" id="rules-btn">View policy</button>
 </header>
 
 <main>
   <section class="panel editor-panel" aria-label="Code editor">
     <div class="toolbar">
-      <button class="ghost" data-sample="bad_example">Load messy sample</button>
-      <button class="ghost" data-sample="good_example">Load clean sample</button>
+      <button class="ghost" data-sample="bad_example">Messy sample</button>
+      <button class="ghost" data-sample="good_example">Clean sample</button>
       <button class="ghost" id="open-btn">Open file…</button>
       <input type="file" id="file-input" accept=".py,.txt" hidden>
+      <button class="ghost" id="undo-btn" hidden title="Undo the last patch">↶ Undo</button>
       <div class="spacer"></div>
       <span class="meta" id="line-meta">0 lines</span>
-      <button class="primary" id="analyze-btn">Analyze <kbd>Ctrl ↵</kbd></button>
+      <label class="toggle" title="Re-analyze automatically as you type"><input type="checkbox" id="live-toggle" checked> Live</label>
+      <button class="primary" id="analyze-btn">Analyze <kbd id="analyze-kbd">Ctrl ↵</kbd></button>
     </div>
     <div class="editor">
       <div class="gutter" aria-hidden="true"><div id="gutter-inner"></div></div>
       <div class="code-wrap">
         <div class="bands" aria-hidden="true"><div id="bands"></div></div>
+        <div class="squiggles" aria-hidden="true"><div id="squiggles"></div></div>
         <textarea id="code" spellcheck="false" wrap="off" autocomplete="off" autocapitalize="off"
                   aria-label="Python code to analyze" placeholder="Paste Python code here…"></textarea>
       </div>
+      <div class="ruler" id="ruler" title="Overview: click a mark to jump to it"></div>
     </div>
   </section>
 
@@ -229,6 +292,7 @@
     <div class="results-head">
       <h2>Report</h2>
       <div class="spacer" style="flex:1"></div>
+      <button class="patch-all" id="patch-all-btn" hidden>Patch all</button>
       <button class="ghost" id="export-btn" hidden>Export JSON</button>
     </div>
     <div class="results-body" id="results" aria-live="polite"></div>
@@ -243,6 +307,22 @@
   <div class="dialog-body" id="rules-body">Loading…</div>
 </dialog>
 
+<dialog id="diff-dialog">
+  <div class="dialog-head">
+    <h2 id="diff-title">Preview fix</h2>
+    <button class="ghost" id="close-diff">Close</button>
+  </div>
+  <div class="dialog-body" id="diff-body"></div>
+  <div class="dialog-foot">
+    <span class="meta" id="diff-meta"></span>
+    <button class="ghost" id="cancel-diff">Cancel</button>
+    <button class="primary" id="apply-diff">Apply patch</button>
+  </div>
+</dialog>
+
+<div class="hovercard" id="hovercard" role="tooltip"></div>
+<div class="toast" id="toast" role="status"></div>
+
 <script>
 (() => {
   "use strict";
@@ -251,14 +331,27 @@
   const $ = (sel, el = document) => el.querySelector(sel);
 
   const codeEl = $("#code"), gutterInner = $("#gutter-inner"), bandsEl = $("#bands");
+  const squigglesEl = $("#squiggles"), ruler = $("#ruler"), hovercard = $("#hovercard");
+  const patchAllBtn = $("#patch-all-btn"), undoBtn = $("#undo-btn"), liveToggle = $("#live-toggle");
   const resultsEl = $("#results"), resultsPanel = $("#results-panel");
   const analyzeBtn = $("#analyze-btn"), exportBtn = $("#export-btn"), lineMeta = $("#line-meta");
 
   let samples = {};
   let report = null;          // last report from the server
   let analyzedCode = null;    // the code that report describes
+  let previous = null;        // the report before that, for the "score went up" badge
+  let reportVersion = 0;
+  let newFile = false;
   let activeLine = null;
-  const filters = { category: null, severity: null, cwe: null };
+  let requestSeq = 0;         // ignore responses that arrive after a newer request
+  let liveTimer = null;
+  const undoStack = [];
+  const filters = { category: null, severity: null, cwe: null, fixable: false };
+  const isMac = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform || navigator.platform || "");
+  const storage = {
+    get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode */ } },
+  };
   const QUALITY_HINT = "MITRE classifies this as a code-quality weakness: it describes the problem, " +
                        "but MITRE says not to use it to label security vulnerabilities.";
 
@@ -295,13 +388,47 @@
     return marks;
   }
 
+  function findingsOnLine(line) {
+    return isFresh() && report.ok ? report.findings.filter(f => f.line === line) : [];
+  }
+
+  // Width of one monospace character, for placing column underlines.
+  let charW = 0;
+  function measureChar() {
+    const probe = Object.assign(document.createElement("span"), { textContent: "x".repeat(100) });
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;font:13px/20px var(--mono)";
+    codeEl.parentElement.appendChild(probe);
+    charW = probe.getBoundingClientRect().width / 100;
+    probe.remove();
+  }
+
+  // The analyzer reports UTF-8 byte columns; convert to a character index.
+  const utf8 = new TextEncoder();
+  function charIndex(text, byteCol) {
+    let bytes = 0, i = 0;
+    for (const ch of text) {
+      if (bytes >= byteCol) break;
+      bytes += utf8.encode(ch).length;
+      i += ch.length;
+    }
+    return i;
+  }
+
+  function toast(message) {
+    const el = $("#toast");
+    el.textContent = message;
+    el.classList.add("show");
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => el.classList.remove("show"), 3200);
+  }
+
   // ------------------------------------------------------------ editor
   let gutterKey = "";
   function renderEditorDecorations(force = false) {
     const count = codeEl.value.split("\n").length;
     lineMeta.textContent = `${count} line${count === 1 ? "" : "s"}`;
     const marks = lineMarks();
-    const key = `${count}|${isFresh()}|${activeLine}|${report ? report.findings?.length : -1}`;
+    const key = `${count}|${isFresh()}|${activeLine}|${reportVersion}`;
     if (key !== gutterKey || force) {
       gutterKey = key;
       let html = "";
@@ -316,6 +443,26 @@
       for (const [line, sev] of marks) bands += `<div class="band sev-${sev}" style="top:${PAD + (line - 1) * LINE_H}px"></div>`;
       if (activeLine) bands += `<div class="band active" style="top:${PAD + (activeLine - 1) * LINE_H}px"></div>`;
       bandsEl.innerHTML = bands;
+
+      // Underline from the reported column to the end of the line's code.
+      let squiggles = "";
+      if (isFresh() && report.ok && charW) {
+        const lines = codeEl.value.split("\n");
+        for (const f of report.findings) {
+          const text = lines[f.line - 1] ?? "";
+          const start = Math.min(charIndex(text, Math.max(0, (f.col || 1) - 1)), text.length);
+          const firstCode = text.length - text.trimStart().length;
+          const from = Math.max(start, firstCode);
+          const width = Math.max(1, text.trimEnd().length - from);
+          squiggles += `<div class="squiggle sev-${f.severity}" style="top:${PAD + f.line * LINE_H - 3}px;` +
+                       `left:${16 + from * charW}px;width:${width * charW}px"></div>`;
+        }
+      }
+      squigglesEl.innerHTML = squiggles;
+
+      // Overview ruler: one tick per marked line, positioned by its share of the file.
+      ruler.innerHTML = [...marks].map(([line, sev]) =>
+        `<button class="tick sev-${sev}" data-line="${line}" title="Line ${line}" style="top:calc(${((line - 1) / Math.max(count, 1)) * 100}% + 2px)"></button>`).join("");
     }
     syncScroll();
   }
@@ -324,6 +471,7 @@
     const y = -codeEl.scrollTop;
     gutterInner.style.transform = `translateY(${y}px)`;
     bandsEl.style.transform = `translateY(${y}px)`;
+    squigglesEl.style.transform = `translate(${-codeEl.scrollLeft}px, ${y}px)`;
   }
 
   function jumpToLine(line) {
@@ -339,7 +487,14 @@
     markActiveFindings(line, false);
   }
 
-  function setCode(text) {
+  // keepHistory: a patch or undo of the same file, so the score badge and undo stack stay meaningful.
+  function setCode(text, { keepHistory = false } = {}) {
+    if (!keepHistory) {
+      previous = null;
+      undoStack.length = 0;
+      undoBtn.hidden = true;
+      newFile = true;   // don't compare the next report with a different file's
+    }
     codeEl.value = text.replace(/\r\n/g, "\n");
     codeEl.scrollTop = 0;
     activeLine = null;
@@ -349,10 +504,57 @@
   function onCodeChanged() {
     resultsPanel.classList.toggle("is-stale", !!report && !isFresh());
     renderEditorDecorations();
+    hideHovercard();
+    clearTimeout(liveTimer);
+    if (liveToggle.checked && codeEl.value.trim() && !isFresh()) liveTimer = setTimeout(() => runAnalysis({ quiet: true }), 450);
   }
 
   codeEl.addEventListener("input", onCodeChanged);
-  codeEl.addEventListener("scroll", syncScroll);
+  codeEl.addEventListener("scroll", () => { syncScroll(); hideHovercard(); });
+  liveToggle.checked = storage.get("p2p-live") !== "off";
+  liveToggle.addEventListener("change", () => {
+    storage.set("p2p-live", liveToggle.checked ? "on" : "off");
+    if (liveToggle.checked && !isFresh()) runAnalysis({ quiet: true });
+  });
+
+  // ---- hover card: what's wrong on the line under the mouse
+  let hoverLine = null, hideTimer = null;
+  function hideHovercard() { hovercard.classList.remove("show"); hoverLine = null; }
+  codeEl.addEventListener("mousemove", e => {
+    const rect = codeEl.getBoundingClientRect();
+    const line = Math.floor((e.clientY - rect.top + codeEl.scrollTop - PAD) / LINE_H) + 1;
+    const found = findingsOnLine(line);
+    if (!found.length) { if (!hovercard.matches(":hover")) { clearTimeout(hideTimer); hideTimer = setTimeout(hideHovercard, 150); } return; }
+    clearTimeout(hideTimer);
+    if (line !== hoverLine) {
+      hoverLine = line;
+      hovercard.innerHTML = found.map(f => `
+        <div class="hc-item sev-${f.severity}">
+          <span class="sev">${f.severity}</span><b>${escapeHtml(f.title)}</b>
+          <p>${richText(f.message)}</p>
+          ${f.fix ? `<button class="fix-btn" data-fix="${report.findings.indexOf(f)}">Preview fix</button>`
+                  : `<span class="manual">No auto-patch: see the report</span>`}
+        </div>`).join("");
+      hovercard.classList.add("show");
+    }
+    const top = rect.top + PAD + line * LINE_H - codeEl.scrollTop + 4;
+    const below = top + hovercard.offsetHeight < innerHeight - 8;
+    hovercard.style.top = `${below ? top : top - LINE_H - hovercard.offsetHeight - 8}px`;
+    hovercard.style.left = `${Math.min(e.clientX + 12, innerWidth - hovercard.offsetWidth - 12)}px`;
+  });
+  codeEl.addEventListener("mouseleave", () => { hideTimer = setTimeout(() => { if (!hovercard.matches(":hover")) hideHovercard(); }, 200); });
+  hovercard.addEventListener("mouseleave", hideHovercard);
+  hovercard.addEventListener("click", e => {
+    const btn = e.target.closest("[data-fix]");
+    if (btn) { hideHovercard(); previewFix(report.findings[Number(btn.dataset.fix)]); }
+  });
+
+  ruler.addEventListener("click", e => {
+    const tick = e.target.closest(".tick");
+    if (!tick) return;
+    jumpToLine(Number(tick.dataset.line));
+    markActiveFindings(Number(tick.dataset.line), true);
+  });
   codeEl.addEventListener("keydown", e => {
     if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
@@ -375,39 +577,63 @@
   });
 
   // ------------------------------------------------------------ analysis
-  async function runAnalysis() {
+  async function postJson(url, body) {
+    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    return data;
+  }
+
+  // quiet: a live re-run while typing; it shouldn't move the cursor or flash the button.
+  async function runAnalysis({ quiet = false } = {}) {
+    clearTimeout(liveTimer);
     const code = codeEl.value;
-    analyzeBtn.disabled = true;
-    analyzeBtn.firstChild.textContent = "Analyzing… ";
+    const seq = ++requestSeq;
+    if (!quiet) { analyzeBtn.disabled = true; analyzeBtn.firstChild.textContent = "Analyzing… "; }
     try {
-      const res = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || res.statusText);
+      const data = await postJson("/api/analyze", { code });
+      if (seq !== requestSeq) return null;           // a newer run is on its way
+      if (newFile) { previous = null; newFile = false; }
+      else if (report?.ok && analyzedCode !== code) previous = { report, code: analyzedCode };
       report = data;
       analyzedCode = code;
-      activeLine = null;
-      filters.category = filters.severity = filters.cwe = null;
+      reportVersion++;
+      if (!quiet) activeLine = null;
       renderResults();
       renderEditorDecorations(true);
       resultsPanel.classList.remove("is-stale");
-      if (!data.ok && data.error?.line) jumpToLine(data.error.line);
+      if (!quiet && !data.ok && data.error?.line) jumpToLine(data.error.line);
+      return data;
     } catch (err) {
+      if (seq !== requestSeq) return null;
       resultsEl.innerHTML = `<div class="error-card"><strong>Request failed.</strong> ${escapeHtml(err.message)}<br>
         Is <code>python server.py</code> still running?</div>`;
+      return null;
     } finally {
-      analyzeBtn.disabled = false;
-      analyzeBtn.firstChild.textContent = "Analyze ";
+      if (seq === requestSeq) { analyzeBtn.disabled = false; analyzeBtn.firstChild.textContent = "Analyze "; }
     }
   }
-  analyzeBtn.addEventListener("click", runAnalysis);
+  analyzeBtn.addEventListener("click", () => runAnalysis());
+  $("#analyze-kbd").textContent = isMac ? "⌘ ↵" : "Ctrl ↵";
+
+  // What changed since the previous run: score delta plus fixed / new findings.
+  function changeSummary() {
+    if (!previous || !report?.ok) return null;
+    // Compare counts per rule: a finding whose line text changed (say, after a rename) is not "new".
+    const counts = list => list.reduce((m, f) => m.set(f.rule_id, (m.get(f.rule_id) || 0) + 1), new Map());
+    const before = counts(previous.report.findings), after = counts(report.findings);
+    let fixed = 0, added = 0;
+    for (const rule of new Set([...before.keys(), ...after.keys()])) {
+      const d = (after.get(rule) || 0) - (before.get(rule) || 0);
+      if (d > 0) added += d; else fixed -= d;
+    }
+    return { delta: report.score - previous.report.score, from: previous.report.score, fixed, added,
+             gateFlipped: previous.report.gate.status === "FAIL" && report.gate.status === "PASS" };
+  }
 
   // ------------------------------------------------------------ results
   function renderEmpty() {
-    exportBtn.hidden = true;
+    exportBtn.hidden = patchAllBtn.hidden = true;
     resultsEl.innerHTML = `<div class="empty"><div>
       <strong>No report yet</strong>
       Paste Python code or load a sample, then press <b>Analyze</b>.<br>
@@ -415,9 +641,21 @@
     </div></div>`;
   }
 
+  function renderDelta() {
+    const c = changeSummary();
+    if (!c) return "";
+    const cls = c.delta > 0 ? "up" : c.delta < 0 ? "down" : "same";
+    const arrow = c.delta > 0 ? "▲" : c.delta < 0 ? "▼" : "•";
+    const parts = [c.fixed && `${c.fixed} fixed`, c.added && `${c.added} new`].filter(Boolean).join(" · ");
+    return `<div class="delta-detail"><span class="delta ${cls}">${arrow} ${c.delta > 0 ? "+" : ""}${c.delta}</span>
+      from ${c.from}${parts ? ` · ${parts}` : ""}</div>`;
+  }
+
   function renderResults() {
     if (!report) return renderEmpty();
     exportBtn.hidden = false;
+    patchAllBtn.hidden = !report.ok || !report.fixable;
+    if (report.ok) patchAllBtn.textContent = `Patch all (${report.fixable})`;
     const stale = `<div class="stale-banner">The code changed since this report. Press <b>Analyze</b> to update it.</div>`;
 
     if (!report.ok) {
@@ -446,8 +684,9 @@
         <span class="cat-count">${c.findings} issue${c.findings === 1 ? "" : "s"}</span>
       </button>`).join("");
 
+    const change = changeSummary();
     resultsEl.innerHTML = stale + `<div class="report">
-      <div class="summary" style="--ring-color:${color}">
+      <div class="summary ${change?.gateFlipped ? "celebrate" : ""}" style="--ring-color:${color}">
         <div class="ring" role="img" aria-label="Score ${r.score} out of 100">
           <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="50"/>
             <circle class="value" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="0 100"/></svg>
@@ -456,6 +695,7 @@
         <div class="verdict">
           <div class="grade-line"><span class="grade">Grade ${r.grade}</span><span class="gate ${r.gate.status}">${r.gate.status === "PASS" ? "✓ PASS" : "✕ FAIL"}</span></div>
           ${reasons}
+          ${renderDelta()}
           <div class="stats">${plural(s.lines, "line")} · ${plural(s.functions, "function")} · ${plural(s.classes, "class", "classes")} · ${plural(r.findings.length, "finding")}</div>
         </div>
       </div>
@@ -503,7 +743,10 @@
     const area = $("#findings-area");
     if (!area || !report?.ok) return;
     const inCategory = report.findings.filter(f =>
-      (!filters.category || f.category === filters.category) && (!filters.cwe || f.cwe[0]?.id === filters.cwe));
+      (!filters.category || f.category === filters.category) && (!filters.cwe || f.cwe[0]?.id === filters.cwe) &&
+      (!filters.fixable || f.fix));
+    const fixableCount = report.findings.filter(f =>
+      (!filters.category || f.category === filters.category) && (!filters.cwe || f.cwe[0]?.id === filters.cwe) && f.fix).length;
     const counts = Object.fromEntries(SEVERITIES.map(sv => [sv, inCategory.filter(f => f.severity === sv).length]));
     const shown = inCategory.filter(f => !filters.severity || f.severity === filters.severity);
 
@@ -513,7 +756,9 @@
     const chips = clearChips.concat([`<button class="chip ${filters.severity ? "" : "active"}" data-sev="">All <b>${inCategory.length}</b></button>`])
       .concat(SEVERITIES.filter(sv => counts[sv]).map(sv =>
         `<button class="chip sev-${sv} ${filters.severity === sv ? "active" : ""}" data-sev="${sv}">
-          <span class="dot"></span>${sv[0].toUpperCase() + sv.slice(1)} <b>${counts[sv]}</b></button>`)).join("");
+          <span class="dot"></span>${sv[0].toUpperCase() + sv.slice(1)} <b>${counts[sv]}</b></button>`))
+      .concat(fixableCount ? [`<button class="chip ${filters.fixable ? "active" : ""}" data-fixable title="Only findings with an automatic patch">
+          🔧 Fixable <b>${fixableCount}</b></button>`] : []).join("");
 
     let list;
     if (!report.findings.length) {
@@ -526,10 +771,15 @@
           <button class="finding-head" data-goto="${f.line}" title="Show line ${f.line} in the editor">
             <span class="sev">${f.severity}</span>
             <span class="finding-title">${escapeHtml(f.title)}<span class="rule-id">${f.rule_id}</span></span>
+            ${pointsTag(f)}
             <span class="loc">line ${f.line}</span>
           </button>
           <div class="finding-body">
             <p class="msg">${richText(f.message)}</p>
+            <div class="finding-actions">
+              ${f.fix ? `<button class="fix-btn" data-fix="${report.findings.indexOf(f)}">🔧 Preview fix</button>`
+                      : `<span class="manual">${f.category === "security" ? "No safe auto-patch: needs a human" : "Manual fix"}</span>`}
+            </div>
             ${cweTags(f)}
             ${f.snippet ? `<code class="snippet">${escapeHtml(f.snippet)}</code>` : ""}
             <details ${i === 0 && ["critical", "high"].includes(f.severity) ? "open" : ""}>
@@ -546,6 +796,15 @@
     area.innerHTML = `<div class="chips">${chips}</div><div class="findings">${list}</div>`;
   }
 
+  function pointsTag(f) {
+    const p = f.points;
+    if (!p) return "";
+    if (!p.counted) return `<span class="pts uncounted" title="Only the first ${perRuleCap} findings of each rule lower the score">not scored</span>`;
+    const clamped = p.category_clamped
+      ? ` ${f.category[0].toUpperCase() + f.category.slice(1)} is already at 0, so fixing this alone won't move the score yet.` : "";
+    return `<span class="pts" title="Costs ${p.category} points in ${f.category}.${clamped}">−${p.category}</span>`;
+  }
+
   function markActiveFindings(line, scroll) {
     let first = null;
     resultsEl.querySelectorAll(".finding").forEach(el => {
@@ -557,6 +816,13 @@
   }
 
   resultsEl.addEventListener("click", e => {
+    const fixBtn = e.target.closest("[data-fix]");
+    if (fixBtn) return previewFix(report.findings[Number(fixBtn.dataset.fix)]);
+    if (e.target.closest("[data-fixable]")) {
+      filters.fixable = !filters.fixable;
+      filters.severity = null;
+      return renderFindings();
+    }
     const goto = e.target.closest("[data-goto]");
     if (goto) return jumpToLine(Number(goto.dataset.goto));
     const cat = e.target.closest(".cat");
@@ -591,9 +857,131 @@
 
   exportBtn.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
-    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "compliance-report.json" });
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "pwn2patch-report.json" });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+
+  // ------------------------------------------------------------ patches
+  const diffDialog = $("#diff-dialog");
+  let pendingPatch = null;   // { code, label } to apply if the user confirms
+
+  function applyEdits(source, edits) {
+    const lines = source.split("\n");
+    [...edits].sort((a, b) => b.start - a.start || b.end - a.end)
+      .forEach(e => lines.splice(e.start - 1, e.end - e.start + 1, ...e.lines));
+    return lines.join("\n");
+  }
+
+  const diffLine = (cls, sign, no, text) =>
+    `<div class="${cls}"><span class="ln-no">${no ?? ""}</span>${sign} ${escapeHtml(text)}</div>`;
+
+  // Render a fix's edits as hunks against the analyzed code, with 2 lines of context.
+  function editsToDiff(source, edits) {
+    const lines = source.split("\n");
+    return [...edits].sort((a, b) => a.start - b.start).map(e => {
+      const from = Math.max(1, e.start - 2), to = Math.min(lines.length, Math.max(e.end, e.start - 1) + 2);
+      let html = `<div class="hunk">line ${e.start}</div>`;
+      for (let n = from; n < e.start; n++) html += diffLine("", " ", n, lines[n - 1]);
+      for (let n = e.start; n <= e.end; n++) html += diffLine("del", "−", n, lines[n - 1]);
+      for (const text of e.lines) html += diffLine("add", "+", "", text);
+      for (let n = Math.max(e.end, e.start - 1) + 1; n <= to; n++) html += diffLine("", " ", n, lines[n - 1]);
+      return html;
+    }).join("");
+  }
+
+  function unifiedToHtml(diff) {
+    let oldNo = 0;
+    return diff.split("\n").filter(l => l && !l.startsWith("---") && !l.startsWith("+++")).map(l => {
+      if (l.startsWith("@@")) { oldNo = Number(/-(\d+)/.exec(l)?.[1] || 1); return `<div class="hunk">line ${oldNo}</div>`; }
+      if (l[0] === "+") return diffLine("add", "+", "", l.slice(1));
+      if (l[0] === "-") return diffLine("del", "−", oldNo++, l.slice(1));
+      return diffLine("", " ", oldNo++, l.slice(1));
+    }).join("");
+  }
+
+  function previewFix(f) {
+    if (!f?.fix || !isFresh()) return toast("The code changed. Re-analyze before patching.");
+    pendingPatch = { code: applyEdits(analyzedCode, f.fix.edits), label: f.fix.title };
+    $("#diff-title").textContent = f.fix.title;
+    $("#diff-body").innerHTML = `
+      <p class="score-preview"><span class="sev sev-${f.severity}" style="width:auto">${f.severity}</span>
+        ${escapeHtml(f.title)} · line ${f.line}</p>
+      ${f.fix.note ? `<p class="fix-note">${richText(f.fix.note)}</p>` : ""}
+      <div class="diff">${editsToDiff(analyzedCode, f.fix.edits)}</div>`;
+    const gain = f.points?.gain_if_fixed ?? 0;
+    $("#diff-meta").textContent = gain > 0 ? `Raises the overall score by about ${gain}`
+      : f.points?.category_clamped ? `${f.category[0].toUpperCase() + f.category.slice(1)} is already at 0: fix a few more to see the score move`
+      : "Doesn't change the score, but it's still worth fixing";
+    diffDialog.showModal();
+    $("#apply-diff").focus();
+  }
+
+  async function previewPatchAll() {
+    if (!isFresh()) return toast("The code changed. Re-analyze before patching.");
+    patchAllBtn.disabled = true;
+    try {
+      const result = await postJson("/api/fix", { code: analyzedCode });
+      if (!result.ok) return toast(result.error?.message || "Could not patch this code.");
+      if (!result.applied.length) return toast("Nothing left to patch automatically.");
+      pendingPatch = { code: result.code, label: `${plural(result.applied.length, "patch", "patches")}` };
+      const left = report.findings.length - result.applied.length;
+      $("#diff-title").textContent = `Patch all: ${plural(result.applied.length, "fix", "fixes")}`;
+      $("#diff-body").innerHTML = `
+        <p class="score-preview">Score <b>${result.score_before}</b> → <b style="color:${gradeColor(result.score_after)}">${result.score_after}</b>
+          <span class="meta">· fixes are applied one at a time and each result is re-checked</span></p>
+        <ul class="applied-list">${[...result.applied.reduce((m, a) => m.set(a.title, (m.get(a.title) || 0) + 1), new Map())]
+          .map(([title, n]) => `<li>${richText(title)}${n > 1 ? ` <b>×${n}</b>` : ""}</li>`).join("")}</ul>
+        <div class="diff">${unifiedToHtml(result.diff)}</div>`;
+      $("#diff-meta").textContent = left > 0 ? "Some findings will still need a human afterwards" : "";
+      diffDialog.showModal();
+      $("#apply-diff").focus();
+    } catch (err) {
+      toast(`Patch failed: ${err.message}`);
+    } finally {
+      patchAllBtn.disabled = false;
+    }
+  }
+  patchAllBtn.addEventListener("click", previewPatchAll);
+
+  async function applyPendingPatch() {
+    if (!pendingPatch) return;
+    const { code, label } = pendingPatch;
+    pendingPatch = null;
+    diffDialog.close();
+    undoStack.push(codeEl.value);
+    undoBtn.hidden = false;
+    const scrollTop = codeEl.scrollTop;
+    setCode(code, { keepHistory: true });
+    codeEl.scrollTop = scrollTop;
+    syncScroll();
+    const data = await runAnalysis({ quiet: true });
+    const c = changeSummary();
+    if (data?.ok && c) toast(`Applied ${label} · ${plural(c.fixed, "issue")} fixed · score ${c.from} → ${data.score}` +
+                             (c.gateFlipped ? " · gate now PASSES 🎉" : ""));
+  }
+  $("#apply-diff").addEventListener("click", applyPendingPatch);
+  $("#cancel-diff").addEventListener("click", () => diffDialog.close());
+  $("#close-diff").addEventListener("click", () => diffDialog.close());
+  diffDialog.addEventListener("click", e => { if (e.target === diffDialog) diffDialog.close(); });
+  diffDialog.addEventListener("close", () => { pendingPatch = null; });
+
+  undoBtn.addEventListener("click", () => {
+    if (!undoStack.length) return;
+    setCode(undoStack.pop(), { keepHistory: true });
+    undoBtn.hidden = !undoStack.length;
+    runAnalysis({ quiet: true });
+  });
+
+  // ------------------------------------------------------------ theme
+  const savedTheme = storage.get("p2p-theme");
+  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+  $("#theme-btn").addEventListener("click", () => {
+    const dark = document.documentElement.dataset.theme
+      ? document.documentElement.dataset.theme === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.dataset.theme = dark ? "light" : "dark";
+    storage.set("p2p-theme", document.documentElement.dataset.theme);
   });
 
   // ------------------------------------------------------------ samples & files
@@ -606,6 +994,15 @@
     const file = fileInput.files[0];
     if (file) setCode(await file.text());
     fileInput.value = "";
+  });
+  // Drop a .py file anywhere on the editor.
+  const editorPanel = $(".editor-panel");
+  editorPanel.addEventListener("dragover", e => { e.preventDefault(); });
+  editorPanel.addEventListener("drop", async e => {
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    e.preventDefault();
+    setCode(await file.text());
   });
 
   // ------------------------------------------------------------ policy dialog
@@ -644,11 +1041,18 @@
   });
 
   // ------------------------------------------------------------ start
+  let perRuleCap = 3;
+  fetch("/api/policy").then(r => r.json()).then(d => { perRuleCap = d.policy.max_counted_per_rule ?? 3; }).catch(() => {});
+  measureChar();
+  document.fonts?.ready.then(() => { measureChar(); renderEditorDecorations(true); });
   renderEmpty();
   renderEditorDecorations();
   fetch("/api/samples").then(r => r.json()).then(data => {
     samples = data;
-    if (!codeEl.value && samples.bad_example) setCode(samples.bad_example);
+    if (!codeEl.value && samples.bad_example) {
+      setCode(samples.bad_example);
+      runAnalysis({ quiet: true });
+    }
   }).catch(() => {});
 })();
 </script>

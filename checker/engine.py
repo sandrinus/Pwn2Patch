@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import ast
 import json
+from collections import Counter
 from pathlib import Path
 
 from .analyzer import Finding, PythonAnalyzer
 from .cwe import CWES
+from .fixes import FixContext, fix_all, suggest_fix, unified_diff
 from .rules import RULES, SEVERITIES
 from .scoring import score_findings
 
 DEFAULT_POLICY_PATH = Path(__file__).with_name("policy.json")
 MAX_SOURCE_CHARS = 200_000
+MAX_FIX_SUGGESTIONS = 150  # each one re-parses the file to verify it
 
 
 def load_policy(path: str | Path | None = None) -> dict:
@@ -76,9 +79,31 @@ def analyze(source: str, policy: dict | None = None) -> dict:
     }
 
     severity_rank = {sev: i for i, sev in enumerate(SEVERITIES)}
+    fix_ctx = FixContext(source, tree)
+    weights, penalties = policy["weights"], policy["penalties"]
+    total_weight = sum(weights.values()) or 1
+    cap = policy.get("max_counted_per_rule", 3)
+    seen_per_rule: dict[str, int] = {}
+    rule_totals = Counter(f.rule_id for f in findings)
+    raw_penalty: dict[str, float] = {}  # per category, before clamping at 0
+    for rule_id, count in rule_totals.items():
+        rule = RULES[rule_id]
+        raw_penalty[rule.category] = raw_penalty.get(rule.category, 0) + penalties[rule.severity] * min(count, cap)
     findings_out = []
-    for f in findings:
+    for index, f in enumerate(findings):
         rule = RULES[f.rule_id]
+        seen_per_rule[f.rule_id] = seen_per_rule.get(f.rule_id, 0) + 1
+        counted = seen_per_rule[f.rule_id] <= cap
+        penalty = penalties[rule.severity] if counted else 0
+        fix = suggest_fix(fix_ctx, f) if index < MAX_FIX_SUGGESTIONS else None
+        # What fixing just this finding would add to the overall score. Removing one of
+        # 5 identical findings gains nothing (only 3 count), and a category already
+        # clamped at 0 only rises once its total penalty drops below 100.
+        total = rule_totals[f.rule_id]
+        freed = penalties[rule.severity] * (min(total, cap) - min(total - 1, cap))
+        cat_penalty = raw_penalty.get(rule.category, 0)
+        cat_gain = max(0, 100 - (cat_penalty - freed)) - max(0, 100 - cat_penalty)
+        gain = round(cat_gain * weights.get(rule.category, 0) / total_weight, 1)
         findings_out.append({
             "rule_id": f.rule_id,
             "title": rule.title,
@@ -92,6 +117,14 @@ def analyze(source: str, policy: dict | None = None) -> dict:
             "fix": rule.fix,
             "ref": rule.ref,
             "cwe": [CWES[cwe_id].to_dict() for cwe_id in cwe_ids_for(f)],
+            "points": {
+                "counted": counted,
+                "category": penalty,
+                "overall": round(penalty * weights.get(rule.category, 0) / total_weight, 1),
+                "gain_if_fixed": gain,
+                "category_clamped": cat_penalty >= 100,
+            },
+            "fix": fix.to_dict() if fix else None,
         })
     findings_out.sort(key=lambda item: (severity_rank[item["severity"]], item["line"]))
 
@@ -104,5 +137,24 @@ def analyze(source: str, policy: dict | None = None) -> dict:
         **score_findings(findings, policy),
         "cwe_summary": cwe_summary(findings_out),
         "cwe_coverage": {"mapped": mapped, "total": len(findings_out)},
+        "fixable": sum(1 for f in findings_out if f["fix"]),
         "findings": findings_out,
+    }
+
+
+def patch_all(source: str, policy: dict | None = None) -> dict:
+    """Apply every automatic fix and report the result, with a before/after diff."""
+    policy = policy or load_policy()
+    before = analyze(source, policy)
+    if not before["ok"]:
+        return {"ok": False, "error": before["error"]}
+    patched, applied = fix_all(source, policy["limits"], set(policy.get("disabled_rules", [])))
+    after = analyze(patched, policy)
+    return {
+        "ok": True,
+        "code": patched,
+        "applied": applied,
+        "diff": unified_diff(source, patched),
+        "score_before": before["score"],
+        "score_after": after["score"] if after["ok"] else None,
     }

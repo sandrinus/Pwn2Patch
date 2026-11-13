@@ -1,9 +1,11 @@
 """Run from the repo root with:  python -m unittest"""
+import ast
 import textwrap
 import unittest
 from pathlib import Path
 
-from checker import CWES, RULES, analyze
+from checker import CWES, RULES, analyze, patch_all
+from checker.fixes import apply_edits, Edit
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
@@ -144,3 +146,88 @@ class ErrorHandlingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def fixed(code: str, rule_id: str) -> str:
+    """Apply the suggested fix for the first `rule_id` finding and return the new code."""
+    code = textwrap.dedent(code)
+    report = analyze(code)
+    finding = next(f for f in report["findings"] if f["rule_id"] == rule_id)
+    assert finding["fix"], f"no fix for {rule_id}"
+    edits = [Edit(**e) for e in finding["fix"]["edits"]]
+    return apply_edits(code, edits)
+
+
+class FixTests(unittest.TestCase):
+    def test_sql_injection_via_variable_becomes_parameterized(self):
+        out = fixed('''
+            def get(cur, name):
+                q = "SELECT * FROM t WHERE name = '" + name + "'"
+                cur.execute(q)
+        ''', "SEC003")
+        self.assertIn('q = "SELECT * FROM t WHERE name = ?"', out)
+        self.assertIn("cur.execute(q, (name,))", out)
+        self.assertNotIn("SEC003", rule_ids(out))
+
+    def test_fstring_sql_becomes_parameterized(self):
+        out = fixed('cur.execute(f"SELECT * FROM t WHERE id = {uid}")', "SEC003")
+        self.assertIn('cur.execute("SELECT * FROM t WHERE id = ?", (uid,))', out)
+
+    def test_shell_string_becomes_argument_list(self):
+        out = fixed('import os\nos.system("ping -c 1 " + host)', "SEC002")
+        self.assertIn("subprocess.run(['ping', '-c', '1', host])", out)
+        self.assertIn("import subprocess", out)
+
+    def test_user_chosen_program_gets_no_fix(self):
+        report = analyze('import subprocess\nsubprocess.run(cmd, shell=True)')
+        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC002")["fix"])
+
+    def test_password_hash_gets_no_fix(self):
+        report = analyze('import hashlib\ndef hash_password(pw):\n    return hashlib.md5(pw).hexdigest()')
+        self.assertIsNone(next(f for f in report["findings"] if f["rule_id"] == "SEC007")["fix"])
+
+    def test_secret_moves_to_environment(self):
+        out = fixed('API_KEY = "abcdef123456"', "SEC004")
+        self.assertIn('API_KEY = os.environ["API_KEY"]', out)
+        self.assertIn("import os", out)
+
+    def test_open_becomes_with_block(self):
+        out = fixed('''
+            def save(msg):
+                f = open("log.txt", "a")
+                f.write(msg)
+                f.close()
+        ''', "REL004")
+        self.assertIn('    with open("log.txt", "a") as f:\n        f.write(msg)\n', out)
+        self.assertNotIn("close", out)
+
+    def test_mutable_default(self):
+        out = fixed('def f(items=[]):\n    """Doc."""\n    return items', "REL002")
+        self.assertIn("def f(items=None):", out)
+        self.assertIn('    """Doc."""\n    if items is None:\n        items = []', out)
+
+    def test_rename_updates_every_use(self):
+        out = fixed('def getUser():\n    pass\n\ngetUser()', "STY002")
+        self.assertEqual(out.count("get_user"), 2)
+        self.assertNotIn("getUser", out)
+
+    def test_star_import_lists_used_names(self):
+        out = fixed('from flask import *\napp = Flask(__name__)\nx = request.args', "MNT005")
+        self.assertIn("from flask import Flask, request", out)
+
+    def test_every_offered_fix_parses(self):
+        report = analyze((SAMPLES / "bad_example.py").read_text(encoding="utf-8"))
+        source = (SAMPLES / "bad_example.py").read_text(encoding="utf-8")
+        for f in report["findings"]:
+            if f["fix"]:
+                ast.parse(apply_edits(source, [Edit(**e) for e in f["fix"]["edits"]]))
+
+    def test_patch_all_improves_bad_sample(self):
+        source = (SAMPLES / "bad_example.py").read_text(encoding="utf-8")
+        result = patch_all(source)
+        self.assertTrue(result["ok"])
+        self.assertGreater(result["score_after"], result["score_before"])
+        remaining = {f["rule_id"] for f in analyze(result["code"])["findings"]}
+        for gone in ("SEC001", "SEC003", "SEC005", "SEC006", "SEC008", "REL001", "REL003", "REL004"):
+            self.assertNotIn(gone, remaining)
+        self.assertIn("SEC002", remaining)  # the /run route lets the user pick the program: needs a human
