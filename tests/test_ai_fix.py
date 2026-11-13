@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 
 from checker import load_policy
-from checker.ai_fix import ai_fix, ai_status, build_messages, parse_draft
+from checker.ai_fix import MAX_ATTEMPTS, ai_fix, ai_status, build_messages, parse_draft
 from checker.analyzer import PythonAnalyzer
 
 POLICY = load_policy()
@@ -31,12 +31,12 @@ GOOD_DRAFT = {
 
 
 def runner_returning(*answers):
-    """A fake Workers AI that returns each answer in turn and records what it was sent."""
+    """A fake Workers AI that returns each answer in turn (repeating the last) and records what it was sent."""
     calls = []
 
     def run(messages):
         calls.append(messages)
-        return answers[len(calls) - 1]
+        return answers[min(len(calls), len(answers)) - 1]
 
     run.calls = calls
     return run
@@ -68,28 +68,81 @@ class AIFixTests(unittest.TestCase):
         feedback = runner.calls[1][-1]["content"]
         self.assertIn("still reports SEC007", feedback)
 
-    def test_rejected_twice_gives_up(self):
+    def test_gives_up_after_max_attempts_and_reports_each_reason(self):
         broken = {**GOOD_DRAFT, "replacement": "    return (", "imports": []}
-        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(broken, broken))
+        runner = runner_returning(broken)
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner)
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["type"], "rejected")
+        self.assertEqual(len(runner.calls), MAX_ATTEMPTS)
+        self.assertEqual(len(result["rejections"]), MAX_ATTEMPTS)
         self.assertIn("doesn't parse", result["error"]["message"])
+
+    def test_copied_line_numbers_are_stripped(self):
+        numbered = {**GOOD_DRAFT, "replacement": "7 |     salt = os.urandom(16)\n"
+                    "7 |     return salt.hex() + hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1).hex()"}
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(numbered))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["attempts"], 1)
+
+    def test_lost_indentation_is_restored(self):
+        flat = {**GOOD_DRAFT, "replacement": "salt = os.urandom(16)\n"
+                "return salt.hex() + hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1).hex()"}
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(flat))
+        self.assertTrue(result["ok"], result)
+        self.assertTrue(all(line.startswith("    ") for line in result["fix"]["edits"][0]["lines"]))
+
+    def test_module_level_helper_keeps_its_indentation(self):
+        helper = {**GOOD_DRAFT, "imports": [], "replacement":
+                  "    return _scrypt(password)\n\n\n"
+                  "def _scrypt(value: str) -> str:\n"
+                  "    return hashlib.scrypt(value.encode(), salt=b'0' * 16, n=2**14, r=8, p=1).hex()"}
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(helper))
+        self.assertTrue(result["ok"], result)
+        self.assertIn("def _scrypt(value: str) -> str:", result["fix"]["edits"][0]["lines"])
+
+    def test_new_low_severity_finding_is_allowed_and_noted(self):
+        long_line = {**GOOD_DRAFT, "replacement": "    salt = os.urandom(16)\n"
+                     "    return salt.hex() + hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1, "
+                     "maxmem=0, dklen=64).hex()  # slow, salted"}
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(long_line))
+        self.assertTrue(result["ok"], result)
+        self.assertEqual([m["rule_id"] for m in result["new_minor"]], ["STY003"])
+        self.assertIn("STY003", result["fix"]["note"])
+
+    def test_edit_that_splits_a_statement_is_rejected_with_its_span(self):
+        source = MD5_PASSWORD.replace("    return hashlib.md5(password.encode()).hexdigest()",
+                                      "    return hashlib.md5(\n        password.encode()\n    ).hexdigest()")
+        half = {**GOOD_DRAFT, "imports": [], "end_line": 8,
+                "replacement": "    return hashlib.scrypt(password.encode(), salt=b'0' * 16, n=2**14, r=8, p=1)"}
+        result = ai_fix(source, "SEC007", 7, POLICY, runner=runner_returning(half))
+        self.assertFalse(result["ok"])
+        self.assertIn("middle of a statement", result["rejections"][0])
+        self.assertIn("lines 7-9", result["rejections"][0])
+
+    def test_feedback_quotes_code_not_shifted_line_numbers(self):
+        broken = {**GOOD_DRAFT, "replacement": "    salt = os.urandom(16\n    return salt"}
+        runner = runner_returning(broken, GOOD_DRAFT)
+        ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner)
+        feedback = runner.calls[1][-1]["content"]
+        self.assertIn("`salt = os.urandom(16`", feedback)
+        self.assertIn("refer to the original code", feedback)
 
     def test_patch_that_adds_a_critical_finding_is_rejected(self):
         sneaky = {**GOOD_DRAFT, "replacement": "    return eval(password)", "imports": []}
-        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(sneaky, sneaky))
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(sneaky))
         self.assertFalse(result["ok"])
-        self.assertIn("SEC001", result["error"]["message"])
+        self.assertIn("SEC001 (critical) at `return eval(password)`", result["error"]["message"])
 
     def test_edit_must_cover_the_reported_line(self):
         elsewhere = {**GOOD_DRAFT, "start_line": 2, "end_line": 2, "replacement": "import hashlib"}
-        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(elsewhere, elsewhere))
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(elsewhere))
         self.assertFalse(result["ok"])
         self.assertIn("must include the reported line 7", result["error"]["message"])
 
     def test_non_import_in_imports_is_rejected(self):
         bad = {**GOOD_DRAFT, "imports": ["os.system('id')"]}
-        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(bad, bad))
+        result = ai_fix(MD5_PASSWORD, "SEC007", 7, POLICY, runner=runner_returning(bad))
         self.assertFalse(result["ok"])
         self.assertIn("not a single import", result["error"]["message"])
 
@@ -105,10 +158,12 @@ class AIFixTests(unittest.TestCase):
 
     def test_prompt_numbers_lines_and_marks_code_as_untrusted(self):
         finding = next(f for f in PythonAnalyzer(MD5_PASSWORD, POLICY["limits"]).run() if f.rule_id == "SEC007")
-        system, user = build_messages(MD5_PASSWORD, finding)
+        system, user = build_messages(MD5_PASSWORD, finding, POLICY["limits"])
         self.assertIn("untrusted data", system["content"])
         self.assertIn("7 |     return hashlib.md5", user["content"])
         self.assertIn("CWE-916", user["content"])
+        self.assertIn("The statement there is line 7", user["content"])
+        self.assertIn("at most 100 characters", user["content"])
 
     def test_parse_draft_rejects_prose(self):
         with self.assertRaises(Exception):

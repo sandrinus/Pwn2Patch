@@ -85,6 +85,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"error": "Expected {\"code\", \"rule_id\", \"line\"}"}, HTTPStatus.BAD_REQUEST)
             return
         result = ai_fix(code, rule_id, line, POLICY)
+        for n, reason in enumerate(result.get("rejections") or [], start=1):
+            print(f"    AI draft {n} for {rule_id} line {line} rejected: {reason}", flush=True)
         if result["ok"]:
             self._send_json(result)
             return

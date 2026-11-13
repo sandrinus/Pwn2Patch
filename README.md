@@ -38,14 +38,18 @@ For the findings above that get no mechanical fix, the UI shows **✨ Ask Worker
 *what* is wrong, so the score stays deterministic; a Workers AI model only drafts *how* to fix it, and
 Pwn2Patch doesn't trust the draft. `checker/ai_fix.py` accepts it only if:
 
-1. it is one edit of at most 60 lines that covers the reported line (plus optional new `import` lines),
+1. it is one edit of whole statements that covers the reported line (plus optional new `import` lines),
 2. the patched code still parses,
 3. re-running the analyzer shows the finding gone, and
-4. no new critical/high finding appears and the overall score doesn't drop.
+4. no new critical, high or medium finding appears. New low/info findings (a long line, a missing
+   docstring) are allowed and listed in the fix's note.
 
-If a draft fails, the model gets the analyzer's reason and one more try. The code is still never executed,
-neither yours nor the model's. The model is told the pasted code is untrusted data, and anything it sends back
-goes through the same checks either way.
+Before checking, the draft is cleaned up for two mistakes models often make: copying the `NN | ` line
+numbers from the prompt, and losing the indentation. If a draft fails, the model gets the analyzer's reasons
+(quoting the code, since added imports shift line numbers) and tries again, up to 3 attempts. The server
+prints each rejected draft's reason. The code is still never executed, neither yours nor the model's. The
+model is told the pasted code is untrusted data, and anything it sends back goes through the same checks
+either way.
 
 To turn it on, create a Cloudflare API token with **Workers AI Read + Edit**, then:
 
