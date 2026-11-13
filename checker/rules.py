@@ -90,6 +90,15 @@ _RULES = [
         "Drive debug from config: app.run(debug=os.environ.get(\"FLASK_DEBUG\") == \"1\").",
         cwe=("CWE-489",),
     ),
+    Rule(
+        "SEC009", "Possible hardcoded secret", "security", "medium",
+        "This string is long and random-looking, which is what API keys and tokens look like. "
+        "Renaming the variable doesn't make a key any less secret. It's medium, not high, because "
+        "hashes and IDs can look random too.",
+        "If it's a credential, load it from the environment or a secrets manager and rotate it. "
+        "If it's a hash, give it a name that says so (e.g. `expected_sha256`).",
+        cwe=("CWE-798",),
+    ),
     # ------------------------------------------------------------- reliability
     Rule(
         "REL001", "Bare except", "reliability", "medium",

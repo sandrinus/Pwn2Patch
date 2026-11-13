@@ -7,7 +7,7 @@ import requests
 from flask import *
 
 DB_PASSWORD = "SuperSecret123!"
-API_KEY = "demo-api-key-not-a-real-one-1234"
+API_KEY = "FAKEk3yZq8vR2kLm9XyT4wPb7NcH3sJd6"
 cache = {}
 
 app = Flask(__name__)
@@ -39,7 +39,7 @@ def calculate(expression):
 
 
 def fetch_report(url, items=[]):
-    resp = requests.get(url, verify=False)
+    resp = requests.get(url, verify=False, headers={"X-API-Key": API_KEY})
     items.append(resp.text)
     return items
 
