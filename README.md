@@ -25,7 +25,7 @@ Then open http://127.0.0.1:8000. The messy sample loads and is analyzed straight
 
 `checker/fixes.py` turns findings into line edits: parameterized SQL, argument-list subprocess calls,
 secrets read from `os.environ`, `with open(...)`, `is None`, renames that update every use in the file, and so on
-(17 of 25 rules). Every fix is checked before it is offered: the patched code must still parse.
+(17 of 26 rules). Every fix is checked before it is offered: the patched code must still parse.
 
 Some findings deliberately get **no** automatic fix, because any mechanical change would be wrong or misleading:
 a route that lets the user choose the program to run, MD5 on a password (SHA-256 would be just as wrong there; it
@@ -58,6 +58,7 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 | `checker/rules.py` | Rule catalog: id, category, severity, why, fix, CWE mapping, PEP reference |
 | `checker/cwe.py` | CWE catalog: official MITRE titles, short labels, MITRE's mapping guidance |
 | `checker/analyzer.py` | Walks the AST and reports rule violations with line numbers |
+| `checker/secret_scan.py` | Secret detection by value: provider key formats, entropy, constant folding |
 | `checker/scoring.py` | Category scores → weighted overall score → grade → PASS/FAIL gate |
 | `checker/policy.json` | The "compliance policy": weights, penalties, limits, gate, disabled rules |
 | `checker/engine.py` | `analyze(source) -> dict`: the one function everything else calls |
@@ -76,21 +77,40 @@ code ──► analyzer.py ──► findings ──► scoring.py ──► sco
 
 It's deterministic: the same code always gets the same score.
 
-### Rules (25)
+### Rules (26)
 
 | Category | Rules |
 |---|---|
-| Security | eval/exec, shell injection, SQL injection (incl. via variables), hardcoded secrets, pickle/yaml deserialization, `verify=False`, MD5/SHA-1, Flask debug mode |
+| Security | eval/exec, shell injection, SQL injection (incl. via variables), hardcoded secrets (by name, value and usage), possible secrets (random-looking strings), pickle/yaml deserialization, `verify=False`, MD5/SHA-1, Flask debug mode |
 | Reliability | bare `except`, swallowed exceptions, mutable defaults, `open()` without `with`, `== None` |
 | Maintainability | long functions, cyclomatic complexity, too many params, deep nesting, wildcard imports, `global` |
 | Style | docstrings, naming, line length, `print` vs logging, TODO/FIXME, type hints |
+
+### Hardcoded secrets
+
+Renaming `API_KEY` to `x` doesn't make the key any less secret, so a variable's name is only one of three signals:
+
+| Signal | Example it catches | Rule |
+|---|---|---|
+| **Name**: the variable, argument or dict key sounds secret | `DB_PASSWORD = "..."`, `connect(password="...")` | SEC004 (high) |
+| **Value**: the string matches a provider's key format, whatever it's called | `settings_value = "ghp_..."`, `"AKIA..."`, `"sk-..."`, `"postgres://admin:pw@db"`, even split as `"ghp_" + "..."` | SEC004 (high) |
+| **Usage**: a hardcoded value flows into a place that takes a credential | `x = "..."` later used in `headers={"X-API-Key": x}`, `f"Bearer {x}"`, `password=x`, `auth=(user, x)`, `smtp.login(user, x)`, `openai.api_key = x`, `jwt.encode(data, x)` | SEC004 (high) |
+| **Value**: a long, random-looking string with no other evidence | `x = "k3yZq8vR2kLm9XyT4wPb..."` | SEC009 (medium) |
+
+SEC009 is medium (it costs points but doesn't fail the gate on its own), because hashes and IDs look random too.
+The entropy check was tuned against real-shaped keys and look-alikes: 32+ character random keys are caught about
+90-100% of the time, while paths, URLs, UUIDs, model names (`all-MiniLM-L6-v2`), CamelCase names and hex digests
+assigned to hash-named variables (`expected_sha256 = "e3b0..."`) are not flagged.
+
+**Limit:** a short, human-chosen password that is renamed *and never used* (`x = "SuperSecret123!"`) looks like
+any other string, and no static scanner can tell. As soon as it's used as a credential, it's caught.
 
 ### CWE mapping
 
 Every finding carries a list of [CWE](https://cwe.mitre.org) entries, most specific first, and the report includes
 a `cwe_summary` (one row per weakness, with counts) and `cwe_coverage` (how many findings have a CWE).
 
-* **19 of 25 rules map to a CWE.** All titles were checked against MITRE (CWE 5.0).
+* **20 of 26 rules map to a CWE.** All titles were checked against MITRE (CWE 5.0).
   The other 6 rules have no accurate CWE: mutable defaults, `== None`, function length, wildcard imports, `print` and type hints.
   They're left unmapped on purpose, since a forced mapping would be misleading.
 * **Context makes it more specific.** A hardcoded *password* maps to CWE-259 (Hard-coded Password), not just
@@ -112,7 +132,7 @@ a `cwe_summary` (one row per weakness, with counts) and `cwe_coverage` (how many
 | SEC007 weak hash | CWE-328 (CWE-916 for passwords) | MNT006 global | CWE-1108 |
 | SEC008 debug mode | CWE-489 | STY001 docstring | CWE-1111 *(quality)* |
 | STY002 naming | CWE-1099 *(quality)* | STY003 line length | CWE-1078 *(quality)* |
-| STY005 TODO/FIXME | CWE-546 | | |
+| STY005 TODO/FIXME | CWE-546 | SEC009 possible secret | CWE-798 |
 
 ## Adding a rule
 

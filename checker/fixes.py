@@ -306,7 +306,7 @@ def _fix_secret(ctx: FixContext, f: Finding) -> Fix | None:
             value, name = const, key.value
     if value is None or not name:
         return None  # e.g. a parameter default: the fix is an API change, not a mechanical edit
-    env = snake(name).strip("_").upper()
+    env = re.sub(r"[^A-Za-z0-9]+", "_", snake(name)).strip("_").upper()  # "X-API-Key" -> X_API_KEY
     return Fix("Read the secret from the environment", SECRET_NOTE.format(env=env),
                [ctx.replace(value, f'os.environ["{env}"]'), *ctx.ensure_import("os")])
 
