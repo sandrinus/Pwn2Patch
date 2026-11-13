@@ -57,7 +57,7 @@ def print_report(path: Path, report: dict) -> None:
         cwe = (f["cwe"][0]["id"] if f["cwe"] else "-").ljust(9)
         print(f"  {paint(sev, f['severity'])}  {f['rule_id']}  {cwe} line {str(f['line']).ljust(4)} {f['message']}")
         if f["severity"] in ("critical", "high"):
-            print(paint(f"{'':30}fix: {f['fix']}", "dim"))
+            print(paint(f"{'':30}fix: {f['how_to_fix']}", "dim"))
     print()
     print_cwe_summary(report)
 

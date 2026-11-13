@@ -26,6 +26,8 @@ from .analyzer import OPEN_FUNCS, PASCAL_CASE, SNAKE_CASE, Finding, PythonAnalyz
 from .rules import RULES, SEVERITIES
 
 SQL_PLACEHOLDER = "?"
+# Where a query placeholder can stand: after a comparison, LIKE, LIMIT/OFFSET, BETWEEN, or in a ( ... , ... ) list.
+SQL_VALUE_SLOT = re.compile(r"(?:[=<>(,]|\b(?:LIKE|ILIKE|LIMIT|OFFSET|BETWEEN))\s*$", re.IGNORECASE)
 FIX_ITERATION_LIMIT = 200
 
 
@@ -69,9 +71,24 @@ class FixContext:
         self.tree = tree
         self.lines = source.split("\n")
         self.parents: dict[ast.AST, ast.AST] = {}
+        self._by_position: dict[tuple[int, int], list[ast.AST]] = {}  # (line, byte col) -> nodes, walk order
         for node in ast.walk(tree):
             for child in ast.iter_child_nodes(node):
                 self.parents[child] = node
+            position = (getattr(node, "lineno", None), getattr(node, "col_offset", None))
+            if position[0] is not None:
+                self._by_position.setdefault(position, []).append(node)
+        self._tokens: list[tokenize.TokenInfo] | None = None
+
+    @property
+    def tokens(self) -> list[tokenize.TokenInfo]:
+        """The file's tokens, computed once (tokenizing is slow on big files). [] if it can't be tokenized."""
+        if self._tokens is None:
+            try:
+                self._tokens = list(tokenize.generate_tokens(io.StringIO(self.source).readline))
+            except (tokenize.TokenError, SyntaxError):
+                self._tokens = []
+        return self._tokens
 
     def line(self, number: int) -> str:
         return self.lines[number - 1] if 0 < number <= len(self.lines) else ""
@@ -82,9 +99,8 @@ class FixContext:
 
     def at(self, finding: Finding, *types: type) -> ast.AST | None:
         """The AST node the analyzer reported (same line and byte column)."""
-        for node in ast.walk(self.tree):
-            if isinstance(node, types) and getattr(node, "lineno", None) == finding.line \
-                    and node.col_offset == finding.col - 1:
+        for node in self._by_position.get((finding.line, finding.col - 1), ()):
+            if isinstance(node, types):
                 return node
         return None
 
@@ -116,7 +132,17 @@ class FixContext:
                 last_line = stmt.end_lineno  # module docstring
             else:
                 break
+        if last_line == 0:
+            # Nothing to go after: keep a shebang, encoding cookie or header comment on top.
+            limit = stmt_start(body[0]) - 1 if body else len(self.lines)
+            while last_line < limit and self.lines[last_line].lstrip().startswith("#"):
+                last_line += 1
         return [Edit(last_line + 1, last_line, [f"import {module}"])]
+
+
+def stmt_start(node: ast.AST) -> int:
+    """First line of a statement. A decorated def/class's `lineno` is the `def` line, not the decorator's."""
+    return min([node.lineno, *(d.lineno for d in getattr(node, "decorator_list", []))])
 
 
 def _str_literal(text: str) -> str:
@@ -167,10 +193,19 @@ def _fix_eval(ctx: FixContext, f: Finding) -> Fix | None:
     call = ctx.at(f, ast.Call)
     if not call or dotted_name(call.func) != "eval":
         return None
+    if len(call.args) != 1 or call.keywords or isinstance(call.args[0], ast.Starred):
+        return None  # eval(expr, globals, locals): literal_eval takes one argument, so this would crash
     return Fix("Replace eval() with ast.literal_eval()",
                "literal_eval only accepts Python literals (numbers, strings, lists, dicts...). "
                "If you really need arithmetic, write a small parser or use a dict of allowed operations.",
                [ctx.replace(call.func, "ast.literal_eval"), *ctx.ensure_import("ast")])
+
+
+# Anything but plain words and spaces/tabs means the shell would do more than split on whitespace.
+SHELL_SYNTAX = re.compile(r"[^\w \t\-./:,+@=]")
+# Functions that accept an argument list. getoutput()/getstatusoutput() always use a shell, even with a list.
+ARGV_FUNCS = {"subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output",
+              "subprocess.Popen"}
 
 
 def _command_list(node: ast.AST) -> list[ast.AST] | None:
@@ -178,6 +213,8 @@ def _command_list(node: ast.AST) -> list[ast.AST] | None:
     parts = _string_parts(node)
     if not parts or not any(not isinstance(p, str) for p in parts):
         return None
+    if any(isinstance(p, str) and SHELL_SYNTAX.search(p) for p in parts):
+        return None  # quotes, pipes, redirects, globs, $VARS...: splitting on spaces would change the command
     items: list[ast.AST] = []
     for i, part in enumerate(parts):
         if isinstance(part, str):
@@ -208,7 +245,7 @@ def _fix_shell(ctx: FixContext, f: Finding) -> Fix | None:
     if name == "os.system":
         text = f"subprocess.run({ast.unparse(arg_list)}).returncode"
         edits = [ctx.replace(call, text), *ctx.ensure_import("subprocess")]
-    elif name.startswith("subprocess."):
+    elif name in ARGV_FUNCS:
         edits = [ctx.replace(call, _call_text(call, args=[arg_list, *call.args[1:]], drop={"shell"}))]
     else:
         return None
@@ -230,6 +267,10 @@ def _sql_query(parts: list[str | ast.AST]) -> tuple[str, list[ast.AST]] | None:
         if text.endswith(("'", '"')) and nxt.startswith(text[-1]):
             text = text[:-1]
             parts[i + 1] = nxt[1:]
+        if text.count("'") % 2 or text.count('"') % 2:
+            return None  # inside a quoted literal, e.g. LIKE '%" + q + "%': a placeholder there is just text
+        if not SQL_VALUE_SLOT.search(text):
+            return None  # e.g. "FROM " + table: placeholders can only stand for values, not names or clauses
         text += SQL_PLACEHOLDER
         params.append(part)
     return (text, params) if params else None
@@ -397,11 +438,12 @@ def _fix_swallowed(ctx: FixContext, f: Finding) -> Fix | None:
 def _function_body_start(func: ast.AST) -> tuple[int, ast.stmt] | None:
     """Line to insert at the top of a function's body (after its docstring)."""
     body = func.body
-    if body[0].lineno == func.lineno:
+    first = stmt_start(body[0])  # above any decorators of a nested def
+    if first == func.lineno:
         return None  # one-line function
     if ast.get_docstring(func) is not None:
         return body[0].end_lineno + 1, body[0]
-    return body[0].lineno, body[0]
+    return first, body[0]
 
 
 def _fix_mutable_default(ctx: FixContext, f: Finding) -> Fix | None:
@@ -448,8 +490,8 @@ def _fix_open(ctx: FixContext, f: Finding) -> Fix | None:
     if close is None:
         return None
     middle = body[index + 1:body.index(close)]
-    if not middle or any(isinstance(n, ast.Constant) and isinstance(n.value, str) and n.lineno != n.end_lineno
-                         for stmt in middle for n in ast.walk(stmt)):
+    if not middle or any(isinstance(n, ast.Constant) and isinstance(n.value, (str, bytes))
+                         and n.lineno != n.end_lineno for stmt in middle for n in ast.walk(stmt)):
         return None  # indenting a multi-line string would change its value
     indent = ctx.indent(assign.lineno)
     inner = [("    " + text) if text.strip() else text
@@ -525,12 +567,12 @@ def _fix_naming(ctx: FixContext, f: Finding) -> Fix | None:
     node = ctx.at(f, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     if not node:
         return None
+    owner = ctx.parents.get(node)
+    if not isinstance(node, ast.ClassDef) and isinstance(owner, ast.ClassDef) and (owner.bases or owner.keywords):
+        return None  # may override an inherited hook (setUp, do_GET, visit_Name): renaming would break it
     new = _rename_target(node.name, isinstance(node, ast.ClassDef))
-    if not new:
-        return None
-    try:
-        tokens = list(tokenize.generate_tokens(io.StringIO(ctx.source).readline))
-    except (tokenize.TokenError, SyntaxError):
+    tokens = ctx.tokens
+    if not new or not tokens:
         return None
     if any(t.type == tokenize.NAME and t.string == new for t in tokens):
         return None  # the new name is already taken
@@ -552,13 +594,16 @@ def _fix_naming(ctx: FixContext, f: Finding) -> Fix | None:
 
 def _fix_docstring(ctx: FixContext, f: Finding) -> Fix | None:
     node = ctx.at(f, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-    if not node or node.body[0].lineno == node.lineno:
+    if not node:
+        return None
+    first = stmt_start(node.body[0])  # a class whose first method is decorated: go above the decorator
+    if first == node.lineno:
         return None
     words = snake(node.name.strip("_")).replace("_", " ").strip()
     summary = (words[:1].upper() + words[1:] + ".") if words else "Describe this."
-    indent = ctx.indent(node.body[0].lineno)
+    indent = ctx.indent(first)
     return Fix("Add a docstring", "This is a placeholder generated from the name. Replace it with a real description.",
-               [Edit(node.body[0].lineno, node.body[0].lineno - 1, [f'{indent}"""{summary}"""'])])
+               [Edit(first, first - 1, [f'{indent}"""{summary}"""'])])
 
 
 FIXERS = {

@@ -46,6 +46,7 @@ NOT_A_SECRET = {"bearer", "basic", "token", "password", "secret", "api_key", "ap
 SNAKE_CASE = re.compile(r"^_{0,2}[a-z][a-z0-9_]*$")
 PASCAL_CASE = re.compile(r"^_{0,2}[A-Z][A-Za-z0-9]*$")
 TODO_MARKER = re.compile(r"\b(TODO|FIXME|HACK|XXX)\b")
+NEWLINE = re.compile(r"\r\n|\r|\n")
 
 SQL_EXECUTORS = (".execute", ".executemany", ".executescript", ".raw")
 SHELL_STRING_FUNCS = {"os.system", "os.popen", "subprocess.getoutput", "subprocess.getstatusoutput"}
@@ -72,6 +73,18 @@ class Finding:
 
 
 # --------------------------------------------------------------------- helpers
+def source_lines(source: str) -> list[str]:
+    """Split into lines the way Python's tokenizer does: only \\n, \\r\\n and \\r end a line.
+
+    str.splitlines() also splits on form feeds, \\x1c-\\x1e, \\x85 and \\u2028/\\u2029, which
+    would put every line after one of them out of step with the AST's line numbers.
+    """
+    lines = NEWLINE.split(source)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def snake(name: str) -> str:
     """`apiKey` -> `api_key`, `DB_PASSWORD` -> `db_password`."""
     return CAMEL_BOUNDARY.sub("_", name).lower()
@@ -193,7 +206,7 @@ def looks_like_secret(name: str, value: ast.AST) -> bool:
 class PythonAnalyzer(ast.NodeVisitor):
     def __init__(self, source: str, limits: dict, disabled: set[str] | None = None):
         self.source = source
-        self.lines = source.splitlines()
+        self.lines = source_lines(source)
         self.limits = limits
         self.disabled = disabled or set()
         self.findings: list[Finding] = []

@@ -6,7 +6,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
-from .analyzer import Finding, PythonAnalyzer
+from .analyzer import Finding, PythonAnalyzer, source_lines
 from .cwe import CWES
 from .fixes import FixContext, fix_all, suggest_fix, unified_diff
 from .rules import RULES, SEVERITIES
@@ -53,9 +53,15 @@ def cwe_summary(findings: list[dict]) -> list[dict]:
     return sorted(rows.values(), key=lambda r: (severity_rank[r["worst_severity"]], -r["count"], r["id"]))
 
 
+def normalize_newlines(source: str) -> str:
+    """CRLF / CR -> LF, so fix edits (which split on "\\n") line up with the AST's line numbers."""
+    return source.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def analyze(source: str, policy: dict | None = None) -> dict:
     """Analyze Python source code against a policy. The code is never executed."""
     policy = policy or load_policy()
+    source = normalize_newlines(source)
 
     if len(source) > MAX_SOURCE_CHARS:
         return _error_report("too_large", f"Input is larger than {MAX_SOURCE_CHARS:,} characters.")
@@ -71,9 +77,10 @@ def analyze(source: str, policy: dict | None = None) -> dict:
         return _error_report("parse", f"Could not parse the code: {type(exc).__name__}")
 
     tree = ast.parse(source)
+    lines = source_lines(source)
     stats = {
-        "lines": len(source.splitlines()),
-        "code_lines": sum(1 for line in source.splitlines() if line.strip() and not line.strip().startswith("#")),
+        "lines": len(lines),
+        "code_lines": sum(1 for line in lines if line.strip() and not line.strip().startswith("#")),
         "functions": sum(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in ast.walk(tree)),
         "classes": sum(isinstance(n, ast.ClassDef) for n in ast.walk(tree)),
     }
@@ -114,7 +121,7 @@ def analyze(source: str, policy: dict | None = None) -> dict:
             "message": f.message,
             "snippet": f.snippet,
             "why": rule.why,
-            "fix": rule.fix,
+            "how_to_fix": rule.fix,  # the rule's advice; "fix" below is the automatic patch (or None)
             "ref": rule.ref,
             "cwe": [CWES[cwe_id].to_dict() for cwe_id in cwe_ids_for(f)],
             "points": {
@@ -145,6 +152,7 @@ def analyze(source: str, policy: dict | None = None) -> dict:
 def patch_all(source: str, policy: dict | None = None) -> dict:
     """Apply every automatic fix and report the result, with a before/after diff."""
     policy = policy or load_policy()
+    source = normalize_newlines(source)
     before = analyze(source, policy)
     if not before["ok"]:
         return {"ok": False, "error": before["error"]}

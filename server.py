@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,7 +71,14 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(code, str):
             self._send_json({"error": "Expected {\"code\": \"...\"}"}, HTTPStatus.BAD_REQUEST)
             return
-        self._send_json(handler(code, POLICY))
+        try:
+            result = handler(code, POLICY)
+        except Exception as exc:  # a checker bug must not drop the connection with no answer
+            traceback.print_exc()
+            self._send_json({"error": f"Internal error while checking the code ({type(exc).__name__})"},
+                            HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_json(result)
 
     # ------------------------------------------------------------ helpers
     def _send(self, body: bytes, content_type: str, status: HTTPStatus = HTTPStatus.OK) -> None:

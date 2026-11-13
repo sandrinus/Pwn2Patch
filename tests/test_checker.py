@@ -226,9 +226,18 @@ class ErrorHandlingTests(unittest.TestCase):
         report = analyze("import sys\nsys.exit(1)\n")
         self.assertTrue(report["ok"])
 
+    def test_line_numbers_match_python_with_unusual_line_breaks(self):
+        # str.splitlines() also breaks on   and form feeds; Python doesn't, so snippets used to drift.
+        for code in ('x = "a b"\ny = 1\nf = open("p")\n', 'x = 1\n\x0c\ny = 2\nf = open("p")\n'):
+            finding = next(f for f in analyze(code)["findings"] if f["rule_id"] == "REL004")
+            self.assertEqual(finding["snippet"], 'f = open("p")', repr(code))
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_windows_and_old_mac_line_endings(self):
+        for newline in ("\r\n", "\r"):
+            code = newline.join(["import os", 'API_KEY = "abcdef123456"', ""])
+            finding = next(f for f in analyze(code)["findings"] if f["rule_id"] == "SEC004")
+            self.assertEqual(finding["line"], 2)
+            self.assertEqual(finding["fix"]["edits"][0]["lines"], ['API_KEY = os.environ["API_KEY"]'])
 
 
 def fixed(code: str, rule_id: str) -> str:
@@ -314,3 +323,65 @@ class FixTests(unittest.TestCase):
         for gone in ("SEC001", "SEC003", "SEC005", "SEC006", "SEC008", "REL001", "REL003", "REL004"):
             self.assertNotIn(gone, remaining)
         self.assertIn("SEC002", remaining)  # the /run route lets the user pick the program: needs a human
+
+    def test_finding_keeps_the_rules_advice_next_to_the_patch(self):
+        finding = next(f for f in analyze('eval(text)')["findings"] if f["rule_id"] == "SEC001")
+        self.assertEqual(finding["how_to_fix"], RULES["SEC001"].fix)
+        self.assertEqual(finding["fix"]["title"], "Replace eval() with ast.literal_eval()")
+
+
+def fix_for(code: str, rule_id: str):
+    report = analyze(textwrap.dedent(code))
+    return next(f for f in report["findings"] if f["rule_id"] == rule_id)["fix"]
+
+
+class UnsafeFixTests(unittest.TestCase):
+    """Cases where a mechanical fix would produce wrong code, so none may be offered."""
+
+    def test_eval_with_extra_arguments(self):
+        self.assertIsNone(fix_for('x = eval(expr, {"__builtins__": {}})', "SEC001"))
+
+    def test_shell_syntax_in_the_command(self):
+        self.assertIsNone(fix_for('import os\nos.system("cat " + f + " | grep x")', "SEC002"))
+        self.assertIsNone(fix_for('import os\nos.system("grep \'a b\' " + f)', "SEC002"))
+        self.assertIsNone(fix_for('import os\nos.system("ls $HOME " + f)', "SEC002"))
+
+    def test_getoutput_always_uses_a_shell(self):
+        self.assertIsNone(fix_for('import subprocess\nout = subprocess.getoutput("ls " + d)', "SEC002"))
+
+    def test_sql_placeholder_only_where_a_value_goes(self):
+        self.assertIsNone(fix_for('''cur.execute("SELECT * FROM t WHERE n LIKE '%" + q + "%'")''', "SEC003"))
+        self.assertIsNone(fix_for('cur.execute("SELECT * FROM " + table)', "SEC003"))
+        self.assertIsNone(fix_for('cur.execute("SELECT * FROM t WHERE " + condition)', "SEC003"))
+        out = fixed('cur.execute(f"INSERT INTO t VALUES ({a}, {b})")', "SEC003")
+        self.assertIn('cur.execute("INSERT INTO t VALUES (?, ?)", (a, b))', out)
+
+    def test_methods_that_may_override_a_base_class_are_not_renamed(self):
+        for base, method in (("unittest.TestCase", "setUp"), ("BaseHTTPRequestHandler", "do_GET")):
+            code = f'class T({base}):\n    """D."""\n    def {method}(self):\n        """D."""\n'
+            self.assertIsNone(fix_for(code, "STY002"), method)
+        out = fixed('class T:\n    """D."""\n    def getX(self):\n        """D."""\n', "STY002")
+        self.assertIn("def get_x(self):", out)
+
+
+class FixPlacementTests(unittest.TestCase):
+    def test_docstring_goes_above_a_decorated_first_method(self):
+        out = fixed('class Foo:\n    @property\n    def x(self) -> int:\n        """X."""\n        return 1\n',
+                    "STY001")
+        self.assertIn('class Foo:\n    """Foo."""\n    @property', out)
+
+    def test_mutable_default_before_a_decorated_inner_function(self):
+        out = fixed('def f(a=[]):\n    @dec\n    def g():\n        """G."""\n    return a\n', "REL002")
+        self.assertIn("def f(a=None):\n    if a is None:\n        a = []\n    @dec", out)
+
+    def test_import_goes_below_a_shebang(self):
+        out = fixed('#!/usr/bin/env python\nAPI_KEY = "abcdef123456"\n', "SEC004")
+        self.assertTrue(out.startswith("#!/usr/bin/env python\nimport os\n"), out)
+
+    def test_multi_line_bytes_are_not_reindented(self):
+        code = 'def f():\n    """D."""\n    fh = open("x", "wb")\n    fh.write(b"""a\nb""")\n    fh.close()\n'
+        self.assertIsNone(fix_for(code, "REL004"))
+
+
+if __name__ == "__main__":
+    unittest.main()

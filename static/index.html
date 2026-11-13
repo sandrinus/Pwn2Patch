@@ -785,7 +785,7 @@
             <details ${i === 0 && ["critical", "high"].includes(f.severity) ? "open" : ""}>
               <summary>Why it matters &amp; how to fix</summary>
               <p><b>Why:</b> ${richText(f.why)}</p>
-              <p><b>Fix:</b> ${richText(f.fix)}</p>
+              <p><b>Fix:</b> ${richText(f.how_to_fix)}</p>
               ${f.cwe.map(c => `<p><b>${c.id}:</b> ${escapeHtml(c.name)}
                 ${c.quality_only ? `<span class="quality-tag" title="${escapeHtml(QUALITY_HINT)}">quality</span>` : ""}</p>`).join("")}
               ${f.ref ? `<p>${refLink(f.ref)}</p>` : ""}
@@ -964,7 +964,8 @@
   $("#cancel-diff").addEventListener("click", () => diffDialog.close());
   $("#close-diff").addEventListener("click", () => diffDialog.close());
   diffDialog.addEventListener("click", e => { if (e.target === diffDialog) diffDialog.close(); });
-  diffDialog.addEventListener("close", () => { pendingPatch = null; });
+  // `close` can arrive late (e.g. in a background tab): don't wipe the patch a newer preview already set.
+  diffDialog.addEventListener("close", () => { if (!diffDialog.open) pendingPatch = null; });
 
   undoBtn.addEventListener("click", () => {
     if (!undoStack.length) return;
